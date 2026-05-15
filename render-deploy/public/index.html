@@ -595,7 +595,7 @@ function changeNights(delta) {
 // ═══════════════════════════════════════════════════
 // CITY / CURRENCY
 // ═══════════════════════════════════════════════════
-function onCurrencyChange(v) { state.currency = v; }
+function onCurrencyChange(v) { state.currency = v; updateExchangeRateBadge(results); }
 function onCityInput(v) {
   state.city = v;
   autoDetectCurrency(v + ' ' + (document.getElementById('district')?.value || ''));
@@ -610,6 +610,7 @@ function autoDetectCurrency(combined) {
         sel.value = code;
         sel.classList.add('ring-2','ring-amber-400','ring-offset-1');
         setTimeout(() => sel.classList.remove('ring-2','ring-amber-400','ring-offset-1'), 1500);
+        updateExchangeRateBadge(results);
       }
       break;
     }
@@ -970,30 +971,44 @@ function filterAndScore(data) {
   }
   return data
     .map(h => {
-      // Validate & correct exchange rate — AI often inverts it
+      // Validate & correct exchange rate with tight 35% threshold
+      // Catches inverted rates: e.g. AI returns 1.58 for SGD (correct is 3.40 — 53% off)
       const aiRate = h.exchangeRateToMYR || knownRate;
-      const validRate = (knownRate > 0 && Math.abs(aiRate - knownRate) / knownRate > 0.60)
+      const validRate = (knownRate > 0 && Math.abs(aiRate - knownRate) / knownRate > 0.35)
         ? knownRate : aiRate;
 
       const key = h.name.toLowerCase();
       const coords = coordMap[key] ||
         Object.entries(coordMap).find(([k]) => key.includes(k) || k.includes(key))?.[1] ||
         null;
+
+      // Keep ALL room types; tag those outside budget for visual dim
+      const roomTypes = (h.roomTypes||[])
+        .filter(r => Object.values(r.prices||{}).some(p=>p>0))
+        .map(r => {
+          const prices = Object.values(r.prices||{}).filter(p=>p>0);
+          const bestMYR = prices.length ? Math.min(...prices) * validRate : 0;
+          return { ...r, _inBudget: !bestMYR || (bestMYR >= state.minPrice && bestMYR <= state.maxPrice) };
+        });
+
       return {
         ...h,
         features: h.features || [],
         exchangeRateToMYR: validRate,
         lat: coords?.lat || null,
         lng: coords?.lng || null,
-        roomTypes: (h.roomTypes||[]).filter(room => {
-          const prices = Object.values(room.prices||{}).filter(p=>p>0);
-          if (!prices.length) return false;
-          const priceMYR = Math.min(...prices) * validRate;
-          return priceMYR >= state.minPrice && priceMYR <= state.maxPrice;
-        })
+        roomTypes
       };
     })
-    .filter(h => h.roomTypes.length > 0)
+    .filter(h => {
+      if (!h.roomTypes.length) return false;
+      // Only exclude hotels whose cheapest room exceeds 3× the budget max
+      const allMYR = h.roomTypes.flatMap(r =>
+        Object.values(r.prices||{}).filter(p=>p>0).map(p => p * h.exchangeRateToMYR)
+      );
+      if (!allMYR.length) return true;
+      return Math.min(...allMYR) <= state.maxPrice * 3;
+    })
     .map(h => ({ ...h, compositeScore: calculateScore(h) }))
     .sort((a,b) => b.compositeScore - a.compositeScore);
 }
@@ -1252,6 +1267,7 @@ function renderComparisonTable(hotel, nights) {
     const best   = prices.length ? Math.min(...prices) : 0;
     const totalC = best * nights;
     const totalM = totalC * (hotel.exchangeRateToMYR||1);
+    const overBudget = room._inBudget === false;
     const cell = v => {
       if (!v || v <= 0) return `<span class="text-slate-300">—</span>`;
       const isBest = v === best;
@@ -1260,10 +1276,13 @@ function renderComparisonTable(hotel, nights) {
         ${isBest?`<span class="text-[7px] font-black text-green-500 uppercase">Best</span>`:''}
       </div>`;
     };
-    return `<tr class="hover:bg-blue-50/40 transition-all">
+    return `<tr class="hover:bg-blue-50/40 transition-all ${overBudget ? 'opacity-50' : ''}">
       <td class="px-4 py-5">
         <div class="font-black text-slate-900 text-[12px] leading-tight">${room.type}</div>
-        <span class="text-[8px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-black">${room.sizeM2}</span>
+        <div class="flex items-center gap-1 mt-0.5">
+          <span class="text-[8px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-black">${room.sizeM2}</span>
+          ${overBudget ? '<span class="text-[8px] bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-lg font-black">Over budget</span>' : ''}
+        </div>
       </td>
       <td class="px-1 py-5 border-l border-slate-100 text-center">
         ${room.breakfastIncluded
@@ -1640,15 +1659,15 @@ function exportExcel() {
 // ═══════════════════════════════════════════════════
 function updateExchangeRateBadge(hotels) {
   const badge = document.getElementById('exchange-rate-badge');
-  if (!hotels.length) { badge.classList.add('hidden'); return; }
-  // Use the first hotel's exchangeRateToMYR (AI-provided)
-  const rate = hotels[0].exchangeRateToMYR;
-  if (!rate || rate <= 0) { badge.classList.add('hidden'); return; }
   const cur = state.currency;
   if (cur === 'MYR') { badge.classList.add('hidden'); return; }
-  // Format nicely: avoid too many decimals
+  // Prefer AI-confirmed rate from results; fall back to KNOWN_RATES immediately
+  const aiRate = hotels && hotels.length ? hotels[0].exchangeRateToMYR : null;
+  const rate = (aiRate && aiRate > 0) ? aiRate : (KNOWN_RATES[cur] || null);
+  if (!rate) { badge.classList.add('hidden'); return; }
   const formatted = rate < 0.01 ? rate.toFixed(6) : rate < 1 ? rate.toFixed(4) : rate.toFixed(2);
-  badge.textContent = `1 ${cur} = RM ${formatted}`;
+  const label = (aiRate && aiRate > 0) ? '' : ' ~';
+  badge.textContent = `${label}1 ${cur} = RM ${formatted}`;
   badge.classList.remove('hidden');
 }
 
@@ -1853,6 +1872,7 @@ function init() {
   buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
   updateNightsDisplay();
   document.getElementById('currency-select').value = state.currency;
+  updateExchangeRateBadge([]); // show approximate rate on load
   buildAccomPills();
   // Mark initially-active pills
   document.querySelectorAll('.accom-pill').forEach(el => {
