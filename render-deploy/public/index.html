@@ -90,7 +90,7 @@
 
   <!-- SIDEBAR -->
   <aside class="lg:col-span-1">
-    <form id="search-form" onsubmit="handleSearch(event)" class="bg-white p-8 rounded-[40px] shadow-xl border border-slate-100 sticky top-28 space-y-6">
+    <form id="search-form" onsubmit="handleSearch(event)" class="bg-white p-8 rounded-[40px] shadow-xl border border-slate-100 space-y-6 overflow-y-auto" style="max-height:calc(100vh - 7rem); position:sticky; top:7rem;">
       <h2 class="text-xl font-black text-slate-900 flex items-center gap-3">
         <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/>
@@ -173,6 +173,17 @@
           <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Date Selection</span>
         </div>
         <div id="checkin-picker"></div>
+        <!-- Nights counter -->
+        <div class="flex items-center justify-center gap-3 py-1">
+          <button type="button" onclick="changeNights(-1)"
+            class="w-8 h-8 rounded-full bg-slate-200 hover:bg-blue-100 text-slate-600 font-black text-lg flex items-center justify-center transition-all">−</button>
+          <div class="text-center">
+            <span id="nights-count" class="text-2xl font-black text-slate-800">3</span>
+            <span class="text-[11px] font-black text-slate-400 ml-1">nights</span>
+          </div>
+          <button type="button" onclick="changeNights(1)"
+            class="w-8 h-8 rounded-full bg-slate-200 hover:bg-blue-100 text-slate-600 font-black text-lg flex items-center justify-center transition-all">+</button>
+        </div>
         <div id="checkout-picker"></div>
       </div>
 
@@ -217,7 +228,7 @@
           </div>
           <div class="relative">
             <span class="absolute left-3 top-2.5 text-[8px] font-black text-slate-300">MAX</span>
-            <input type="number" id="max-price" value="1500" class="w-full pl-8 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] font-black outline-none focus:border-blue-500"/>
+            <input type="number" id="max-price" value="1000" class="w-full pl-8 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] font-black outline-none focus:border-blue-500"/>
           </div>
         </div>
       </div>
@@ -264,32 +275,35 @@
 
     <!-- Controls bar -->
     <div id="results-controls" class="hidden">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-8 rounded-[40px] shadow-lg border border-slate-100">
-        <div class="flex gap-5">
-          <button onclick="setViewMode('comparison')" id="btn-comparison"
-            class="px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl scale-105">
-            Rate Comparison
-          </button>
-          <button onclick="setViewMode('qualitative')" id="btn-qualitative"
-            class="px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
-            Review Matrix
-          </button>
-        </div>
-        <div class="flex flex-wrap items-center gap-4">
-          <button onclick="exportPDF()"
-            class="bg-emerald-600 text-white px-6 py-4 rounded-[20px] font-black text-[11px] flex items-center gap-3 hover:bg-emerald-700 shadow-xl transition-all active:scale-95">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/>
-            </svg>
-            Executive PDF
-          </button>
-          <button onclick="exportExcel()"
-            class="bg-blue-700 text-white px-6 py-4 rounded-[20px] font-black text-[11px] flex items-center gap-3 hover:bg-blue-800 shadow-xl transition-all active:scale-95">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
-            </svg>
-            Room Catalog Excel
-          </button>
+      <div class="bg-white p-6 rounded-[40px] shadow-lg border border-slate-100">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <!-- 3 tabs -->
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="setViewMode('comparison')" id="btn-comparison"
+              class="px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl">
+              Shortlisted Hotels
+            </button>
+            <button onclick="setViewMode('qualitative')" id="btn-qualitative"
+              class="px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
+              Review Matrix
+            </button>
+            <button onclick="setViewMode('catalog')" id="btn-catalog"
+              class="px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
+              Room Catalog
+            </button>
+          </div>
+          <!-- Per-tab export buttons -->
+          <div class="flex gap-3">
+            <button id="export-pdf-btn" onclick="exportHotelsPDF()"
+              class="bg-emerald-600 text-white px-5 py-3 rounded-[18px] font-black text-[11px] flex items-center gap-2 hover:bg-emerald-700 shadow-xl transition-all active:scale-95">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>
+              <span id="export-pdf-label">Export PDF</span>
+            </button>
+            <button id="export-excel-btn" onclick="exportExcel()" class="hidden bg-blue-700 text-white px-5 py-3 rounded-[18px] font-black text-[11px] flex items-center gap-2 hover:bg-blue-800 shadow-xl transition-all active:scale-95">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+              Export Excel
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -444,7 +458,7 @@ let state = {
   city: 'Taipei', district: '', nearLocation: '', preferredHotel: '',
   checkIn: todayStr(), checkOut: offsetDay(3),
   accommodationTypes: ['Hotel','Resort'], maxMRTWalk: 'any', minRating: 4.5,
-  minPrice: 500, maxPrice: 1500, currency: 'TWD', radiusKm: 5
+  minPrice: 500, maxPrice: 1000, currency: 'TWD', radiusKm: 5
 };
 let results = [];
 let viewMode = 'comparison';
@@ -555,6 +569,20 @@ function syncDate(containerId, field) {
   const dd  = sel[0].value.toString().padStart(2,'0');
   const mm  = (parseInt(sel[1].value)+1).toString().padStart(2,'0');
   state[field] = `${sel[2].value}-${mm}-${dd}`;
+  updateNightsDisplay();
+}
+
+function updateNightsDisplay() {
+  const el = document.getElementById('nights-count');
+  if (el) el.textContent = getNights();
+}
+
+function changeNights(delta) {
+  const newNights = Math.max(1, getNights() + delta);
+  const checkIn = new Date(state.checkIn + 'T00:00:00');
+  state.checkOut = new Date(checkIn.getTime() + newNights * 86400000).toISOString().split('T')[0];
+  buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
+  updateNightsDisplay();
 }
 
 // ═══════════════════════════════════════════════════
@@ -764,21 +792,54 @@ Return ONLY a valid JSON array matching this schema:
 // JSON EXTRACTOR
 // ═══════════════════════════════════════════════════
 function extractJSON(text) {
-  text = text.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+  text = text.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+  // Try standard array extraction
   const start = text.indexOf('[');
   if (start !== -1) {
     const end = text.lastIndexOf(']');
-    if (end > start) { try { return JSON.parse(text.slice(start, end+1)); } catch {} }
+    if (end > start) {
+      try { return JSON.parse(text.slice(start, end+1)); } catch(e1) {
+        // Try to repair truncated JSON
+        const repaired = tryRepairJSONArray(text.slice(start, end+1));
+        if (repaired) return repaired;
+      }
+    }
+    // Response might be truncated before closing bracket
+    const repaired = tryRepairJSONArray(text.slice(start));
+    if (repaired) return repaired;
   }
+  // Try object wrapper (some APIs wrap array in {})
   const oStart = text.indexOf('{');
   if (oStart !== -1) {
     try {
       const obj = JSON.parse(text.slice(oStart));
       const arr = Object.values(obj).find(v => Array.isArray(v));
-      if (arr) return arr;
+      if (arr && arr.length) return arr;
     } catch {}
+    // Object might also be truncated — find last complete hotel object
+    const repairedArr = tryRepairJSONArray('[' + text.slice(oStart+1));
+    if (repairedArr) return repairedArr;
   }
   throw new Error('No valid JSON array in response');
+}
+
+function tryRepairJSONArray(text) {
+  // Walk through and find the last position where a complete {} object closes at depth 1
+  let depth = 0, inStr = false, esc = false, lastObjClose = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\' && inStr) { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '[' || c === '{') depth++;
+    if (c === '}') { depth--; if (depth === 1) lastObjClose = i; }
+    if (c === ']') depth--;
+  }
+  if (lastObjClose > 0) {
+    try { return JSON.parse(text.slice(0, lastObjClose+1) + ']'); } catch {}
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════════
@@ -1022,10 +1083,25 @@ async function handleSearch(e) {
 // ═══════════════════════════════════════════════════
 function setViewMode(mode) {
   viewMode = mode;
-  const active = 'px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl scale-105';
-  const idle   = 'px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100';
-  document.getElementById('btn-comparison').className = mode==='comparison' ? active : idle;
-  document.getElementById('btn-qualitative').className = mode==='qualitative' ? active : idle;
+  const active = 'px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl';
+  const idle   = 'px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100';
+  ['comparison','qualitative','catalog'].forEach(m => {
+    const btn = document.getElementById('btn-'+m);
+    if (btn) btn.className = m === mode ? active : idle;
+  });
+  // Show/hide export buttons based on tab
+  const pdfBtn   = document.getElementById('export-pdf-btn');
+  const xlBtn    = document.getElementById('export-excel-btn');
+  const pdfLabel = document.getElementById('export-pdf-label');
+  if (mode === 'catalog') {
+    pdfBtn.classList.add('hidden');
+    xlBtn.classList.remove('hidden');
+  } else {
+    pdfBtn.classList.remove('hidden');
+    xlBtn.classList.add('hidden');
+    if (pdfLabel) pdfLabel.textContent = mode === 'qualitative' ? 'Export Matrix PDF' : 'Export Hotels PDF';
+    pdfBtn.onclick = mode === 'qualitative' ? exportMatrixPDF : exportHotelsPDF;
+  }
   renderResults();
 }
 
@@ -1034,7 +1110,9 @@ function setViewMode(mode) {
 // ═══════════════════════════════════════════════════
 function renderResults() {
   const el = document.getElementById('results-container');
-  el.innerHTML = viewMode === 'qualitative' ? renderQualitativeView(results) : results.map(renderHotelCard).join('');
+  if (viewMode === 'qualitative') el.innerHTML = renderQualitativeView(results);
+  else if (viewMode === 'catalog') el.innerHTML = renderRoomCatalog(results);
+  else el.innerHTML = results.map(renderHotelCard).join('');
   el.classList.add('fade-in');
 }
 
@@ -1203,6 +1281,72 @@ function renderComparisonTable(hotel, nights) {
   </div>`;
 }
 
+function renderRoomCatalog(hotels) {
+  const nights = getNights();
+  const cur = state.currency;
+  const rows = hotels.flatMap(h =>
+    (h.roomTypes||[]).map(room => {
+      const prices = Object.values(room.prices||{}).filter(p=>p>0);
+      const best = prices.length ? Math.min(...prices) : 0;
+      return { hotel: h, room, best };
+    })
+  ).sort((a,b) => a.best - b.best);
+
+  if (!rows.length) return '<p class="text-slate-400 text-center py-20">No room data available.</p>';
+
+  const tableRows = rows.map(({hotel, room, best}) => {
+    const totalCur = best * nights;
+    const totalMYR = totalCur * (hotel.exchangeRateToMYR||1);
+    const cell = v => v>0 ? `<span class="font-black">${new Intl.NumberFormat('en-US').format(v)}</span>` : '<span class="text-slate-300">—</span>';
+    return `<tr class="hover:bg-blue-50/30 transition-all border-b border-slate-100">
+      <td class="px-4 py-3 font-black text-slate-900 text-[12px]">${hotel.name}</td>
+      <td class="px-4 py-3 text-[11px] text-slate-600">${room.type}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${room.sizeM2}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${room.breakfastIncluded?'<span class="text-emerald-600 font-black">Yes</span>':'<span class="text-slate-300">No</span>'}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${cell(room.prices?.official)}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${cell(room.prices?.agoda)}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${cell(room.prices?.booking)}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${cell(room.prices?.trip)}</td>
+      <td class="px-3 py-3 text-center text-[11px]">${cell(room.prices?.klook)}</td>
+      <td class="px-4 py-3 text-center font-black text-green-700 text-[13px] bg-green-50/30">${best>0?fmtPrice(totalCur,cur):'—'}</td>
+      <td class="px-4 py-3 text-center font-black text-orange-700 text-[13px] bg-orange-50/30">${best>0?fmtPrice(totalMYR,'MYR'):'—'}</td>
+      <td class="px-3 py-3 text-center text-[10px] text-slate-400">${room.cancellationPolicy||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="bg-white rounded-[40px] shadow-lg border border-slate-100 overflow-hidden fade-in">
+    <div class="px-8 py-5 border-b border-slate-100 flex items-center gap-3">
+      <span class="text-sm font-black text-slate-700 uppercase tracking-wider">Room Catalog</span>
+      <span class="badge-est">${rows.length} rooms across ${hotels.length} properties</span>
+      <span class="text-[10px] text-slate-400 ml-auto">Sorted by best nightly rate • ${nights} nights</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-[11px] border-collapse" style="min-width:1000px">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>
+            <th class="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-wider">Hotel</th>
+            <th class="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-wider">Room Type</th>
+            <th class="px-3 py-3 text-center font-black text-slate-500 uppercase tracking-wider">Size</th>
+            <th class="px-3 py-3 text-center font-black text-slate-500 uppercase tracking-wider">Bkfst</th>
+            <th class="px-3 py-3 text-center font-black text-blue-700 uppercase tracking-wider">Official</th>
+            <th class="px-3 py-3 text-center font-black text-blue-700 uppercase tracking-wider">Agoda</th>
+            <th class="px-3 py-3 text-center font-black text-blue-700 uppercase tracking-wider">Booking</th>
+            <th class="px-3 py-3 text-center font-black text-blue-700 uppercase tracking-wider">Trip</th>
+            <th class="px-3 py-3 text-center font-black text-blue-700 uppercase tracking-wider">Klook</th>
+            <th class="px-4 py-3 text-center font-black text-green-700 uppercase tracking-wider bg-green-50/50">Total ${cur}</th>
+            <th class="px-4 py-3 text-center font-black text-orange-700 uppercase tracking-wider bg-orange-50/50">Total MYR</th>
+            <th class="px-3 py-3 text-center font-black text-slate-500 uppercase tracking-wider">Cancel</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+    <div class="px-8 py-3 bg-amber-50/60 border-t border-amber-100 text-[10px] text-slate-500">
+      <span class="badge-est mr-2">Est. Prices</span>Prices are AI estimates — click booking links on hotel cards to verify actual rates.
+    </div>
+  </div>`;
+}
+
 function renderQualitativeView(hotels) {
   const metrics = [
     {key:'staffFriendliness', label:'Staff Friendliness'},
@@ -1279,111 +1423,138 @@ function renderQualitativeView(hotels) {
 // ═══════════════════════════════════════════════════
 // PDF EXPORT
 // ═══════════════════════════════════════════════════
-function exportPDF() {
+function exportHotelsPDF() {
   if (!results.length) return;
   const {jsPDF} = window.jspdf;
   const doc = new jsPDF('p','mm','a4');
+  const nights = getNights();
+  const blue=[30,64,175], emerald=[5,150,105], slate=[71,85,105], amber=[217,119,6];
+
+  // Cover
+  doc.setFillColor(...blue); doc.rect(0,0,210,55,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold');
+  doc.setFontSize(22); doc.text('LuxeStay — Shortlisted Hotels',15,24);
+  doc.setFontSize(10); doc.text(`${state.city} | ${state.checkIn} → ${state.checkOut} (${nights} nights) | ${results.length} properties`,15,36);
+  doc.setFontSize(8);
+  doc.text(lastRealHotels ? 'Ratings: Verified via Google Maps | Prices: AI-estimated' : 'All data: AI-generated estimates', 15,46);
+
+  let yPos = 65;
+  results.forEach((hotel,idx) => {
+    if (yPos > 230) { doc.addPage(); yPos = 20; }
+    // Hotel header
+    doc.setFillColor(248,250,252); doc.rect(0,yPos-5,210,32,'F');
+    doc.setTextColor(...blue); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+    doc.text(`${idx+1}. ${hotel.name}`,15,yPos+3);
+    doc.setFontSize(8); doc.setTextColor(...slate);
+    doc.text(`LuxeScore: ${hotel.compositeScore}/10 | ★ ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)${lastRealHotels?' [Google]':''} | Transport: ${hotel.proximity?.mrt||'—'}`,15,yPos+11);
+    yPos += 20;
+
+    // Lead price row
+    const all=(hotel.roomTypes||[]).flatMap(r=>Object.values(r.prices||{}).filter(p=>p>0));
+    if (all.length) {
+      const lead=Math.min(...all);
+      const myr=lead*nights*(hotel.exchangeRateToMYR||1);
+      doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...emerald);
+      doc.text(`Lead rate: ~${state.currency} ${lead.toLocaleString()}/night | ~RM ${Math.round(myr).toLocaleString()} total (${nights}n)`,15,yPos);
+      yPos += 7;
+    }
+
+    // Pros/Cons
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(30,41,59);
+    const pros = (hotel.pros||[]).slice(0,2).map(p=>'+ '+p);
+    const cons = (hotel.cons||[]).slice(0,2).map(c=>'- '+c);
+    [...pros,...cons].forEach(line => {
+      if (yPos > 270) { doc.addPage(); yPos = 20; }
+      const lns = doc.splitTextToSize(line, 180);
+      doc.text(lns,15,yPos); yPos += lns.length*4.5;
+    });
+
+    yPos += 8;
+  });
+
+  // Append summary rate table
+  doc.addPage();
+  doc.setFillColor(...blue); doc.rect(0,0,210,30,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text('Rate Summary',15,20);
+  const leadRows=results.map((h,i)=>{
+    const all=(h.roomTypes||[]).flatMap(r=>Object.values(r.prices||{}).filter(p=>p>0));
+    const lead=all.length?Math.min(...all):0;
+    const myr=lead*nights*(h.exchangeRateToMYR||1);
+    return [`${i+1}. ${h.name}`,`~${state.currency} ${lead.toLocaleString()}`,`~RM ${Math.round(myr).toLocaleString()}`,`${h.compositeScore}/10`,`${h.guestRating}${lastRealHotels?'★':''}`];
+  });
+  doc.autoTable({startY:38,head:[['Property',`Lead Nightly (${state.currency})`,`Total MYR (${nights}n)`,'LuxeScore','Rating']],
+    body:leadRows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[30,41,59],fontStyle:'bold'},
+    columnStyles:{0:{fontStyle:'bold',cellWidth:65}},margin:{left:15,right:15}});
+
+  doc.save(`LuxeStay_${state.city}_Hotels.pdf`);
+  toast('Hotels PDF exported!');
+}
+
+function exportMatrixPDF() {
+  if (!results.length) return;
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF('l','mm','a4'); // landscape for matrix
   const nights = getNights();
   const blue=[30,64,175], red=[220,38,38], amber=[217,119,6], emerald=[5,150,105], slate=[71,85,105];
   const sc = r => r>=4.3?emerald:r>=3.8?blue:r>=3.0?amber:red;
 
   // Cover
-  doc.setFillColor(...blue); doc.rect(0,0,210,55,'F');
+  doc.setFillColor(...blue); doc.rect(0,0,297,45,'F');
   doc.setTextColor(255,255,255); doc.setFont('helvetica','bold');
-  doc.setFontSize(24); doc.text('LuxeStay Intelligence Report',15,26);
-  doc.setFontSize(11); doc.text(`${state.city} | ${state.checkIn} → ${state.checkOut} | ${results.length} Properties`,15,38);
-  doc.setFontSize(9);
-  const modeNote = lastRealHotels ? 'Ratings: Real (Google Maps) | Prices: AI-estimated' : 'All data: AI-generated estimates';
-  doc.text(modeNote, 15, 47);
+  doc.setFontSize(20); doc.text('LuxeStay — Review Matrix & Profiles',15,22);
+  doc.setFontSize(9); doc.text(`${state.city} | ${state.checkIn} → ${state.checkOut} | ${results.length} properties analysed`,15,34);
 
-  // Sentiment page
+  // Sentiment bars page
   const summaryMetrics=[
-    {key:'staffFriendliness',label:'Staff Friendliness'},{key:'cleanliness',label:'Sanitation'},
-    {key:'roomComfort',label:'Sleep Comfort'},{key:'noiseLevel',label:'Quietness'},{key:'overallCondition',label:'Condition'}
+    {key:'staffFriendliness',label:'Staff Friendliness'},{key:'cleanliness',label:'Cleanliness'},
+    {key:'roomComfort',label:'Sleep Comfort'},{key:'noiseLevel',label:'Quietness'},
+    {key:'overallCondition',label:'Condition'},{key:'acPerformance',label:'AC Performance'},
+    {key:'soundproofing',label:'Soundproofing'},{key:'bathroomCondition',label:'Bathroom'},
+    {key:'transitProximity',label:'MRT Access'},{key:'maintenanceQuality',label:'Maintenance'}
   ];
-  let yPos=70;
+
+  let yPos=55;
   results.forEach((hotel,idx)=>{
-    if(yPos>240){doc.addPage();yPos=20;}
-    doc.setTextColor(30,41,59); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+    if(yPos>170){doc.addPage();yPos=20;}
+    doc.setTextColor(30,41,59); doc.setFont('helvetica','bold'); doc.setFontSize(11);
     doc.text(`${idx+1}. ${hotel.name}`,15,yPos);
-    doc.setFontSize(8); doc.setTextColor(100,116,139);
-    doc.text(`LuxeScore: ${hotel.compositeScore}/10 | Rating: ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)${lastRealHotels?' [Google]':''}`,15,yPos+5);
+    doc.setFontSize(7); doc.setTextColor(100,116,139);
+    doc.text(`LuxeScore: ${hotel.compositeScore}/10 | ★ ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)`,15,yPos+5);
     yPos+=11;
-    summaryMetrics.forEach(sm=>{
-      const md=(hotel.reviewMetrics||{})[sm.key]||{rating:0};
-      doc.setTextColor(...slate); doc.setFont('helvetica','bold'); doc.setFontSize(7);
-      doc.text(sm.label,15,yPos+3);
-      doc.setFillColor(241,245,249); doc.rect(50,yPos,100,4,'F');
-      const c=sc(md.rating); doc.setFillColor(...c); doc.rect(50,yPos,(md.rating/5)*100,4,'F');
-      doc.setTextColor(30,41,59); doc.setFontSize(8); doc.text(md.rating.toFixed(1),155,yPos+3.5);
-      yPos+=7;
+
+    // Two-column metric bars
+    summaryMetrics.forEach((sm,si)=>{
+      const md=(hotel.reviewMetrics||{})[sm.key]||{rating:0,summary:''};
+      const col = si<5 ? 15 : 150;
+      const row = si<5 ? yPos+(si*7) : yPos+((si-5)*7);
+      if (si===5) {} // right column starts same y
+      doc.setTextColor(...slate); doc.setFont('helvetica','bold'); doc.setFontSize(6.5);
+      doc.text(sm.label,col,row+3);
+      doc.setFillColor(241,245,249); doc.rect(col+42,row,80,4,'F');
+      const c=sc(md.rating); doc.setFillColor(...c); doc.rect(col+42,row,(md.rating/5)*80,4,'F');
+      doc.setTextColor(30,41,59); doc.setFontSize(7); doc.text(md.rating.toFixed(1),col+125,row+3.5);
+      // Summary text
+      if(md.summary){ doc.setFont('helvetica','normal'); doc.setFontSize(6); doc.setTextColor(100,116,139); const s=doc.splitTextToSize(md.summary,100); doc.text(s,col+42,row+8); }
     });
-    yPos+=12;
+    yPos+=5*7+12;
   });
 
-  // Rate page
+  // Profile Recommendations page
   doc.addPage();
-  doc.setFillColor(...blue); doc.rect(0,0,210,40,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold');
-  doc.setFontSize(20); doc.text('Market Rate Architecture',15,25);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  doc.text(`Estimated lead pricing — verify on booking platforms | Budget: RM${state.minPrice}–RM${state.maxPrice}/night`,15,33);
-
-  const leadRows=results.map((h,i)=>{
-    const all=(h.roomTypes||[]).flatMap(r=>Object.values(r.prices||{}).filter(p=>p>0));
-    const lead=all.length?Math.min(...all):0;
-    const myr=lead*nights*(h.exchangeRateToMYR||1);
-    return [`${i+1}. ${h.name}`,`${state.currency} ${lead.toLocaleString()}`,`RM ${Math.round(myr).toLocaleString()}`,`${h.compositeScore}/10`,`${h.guestRating}${lastRealHotels?'★ Real':''}`];
+  doc.setFillColor(...blue); doc.rect(0,0,297,30,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text('Profile Recommendations',15,20);
+  const prRows=results.map((h,i)=>{
+    const pr=h.profileRecommendations||{};
+    return [`${i+1}. ${h.name}`,pr.business||'',pr.family||'',pr.budget||'',pr.lightSleeper||''];
   });
-  doc.autoTable({startY:50,head:[['Property',`Lead Nightly (${state.currency})`,`Total MYR (${nights}n)`,'LuxeScore','Rating']],
-    body:leadRows,styles:{fontSize:8,cellPadding:3.5},headStyles:{fillColor:[30,41,59],fontStyle:'bold'},
-    columnStyles:{0:{fontStyle:'bold',cellWidth:65}},margin:{left:15,right:15}});
+  doc.autoTable({startY:38,head:[['Property','Business','Family','Budget','Light Sleeper']],body:prRows,
+    styles:{fontSize:7.5,cellPadding:3},headStyles:{fillColor:[30,41,59],fontStyle:'bold'},
+    columnStyles:{0:{fontStyle:'bold',cellWidth:55}},margin:{left:15,right:15}});
 
-  // Per-hotel deep-dive
-  results.forEach((hotel,idx)=>{
-    doc.addPage();
-    doc.setFillColor(248,250,252); doc.rect(0,0,210,45,'F');
-    doc.setTextColor(...blue); doc.setFont('helvetica','bold'); doc.setFontSize(18);
-    doc.text(`${idx+1}. ${hotel.name}`,15,22);
-    doc.setFontSize(9); doc.setTextColor(100,116,139);
-    doc.text(`Rating: ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)${lastRealHotels?' — Verified via Google Maps':''}`,15,32);
-    doc.text(`Transport: ${hotel.proximity?.mrt||'—'} | Airport: ${hotel.proximity?.airport||'—'}`,15,39);
-
-    let cy=55;
-    doc.setTextColor(...emerald); doc.setFontSize(12); doc.text('Key Positives',15,cy);
-    doc.setTextColor(...red); doc.text('Concerns',110,cy); cy+=8;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(30,41,59);
-    let py=cy,cny=cy;
-    (hotel.pros||[]).forEach(p=>{const ln=doc.splitTextToSize('• '+p,88);doc.text(ln,15,py);py+=ln.length*5;});
-    (hotel.cons||[]).forEach(c=>{const ln=doc.splitTextToSize('• '+c,88);doc.text(ln,110,cny);cny+=ln.length*5;});
-    cy=Math.max(py,cny)+15;
-
-    doc.setFont('helvetica','bold'); doc.setTextColor(...blue); doc.setFontSize(12);
-    doc.text('Room Inventory (Estimated Prices)',15,cy);
-    const roomRows=(hotel.roomTypes||[]).map(room=>{
-      const prices=Object.values(room.prices||{}).filter(p=>p>0);
-      const best=prices.length?Math.min(...prices):0;
-      return[room.type,room.sizeM2,room.breakfastIncluded?'Yes':'No',
-        `~${state.currency} ${best.toLocaleString()}`,`~RM ${Math.round(best*nights*(hotel.exchangeRateToMYR||1)).toLocaleString()}`];
-    });
-    doc.autoTable({startY:cy+5,head:[['Category','Size','Bkfst',`Best est. (${state.currency})`,`Est. Total (MYR)`]],
-      body:roomRows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[51,65,85],fontStyle:'bold'},
-      columnStyles:{0:{fontStyle:'bold',cellWidth:55}},margin:{left:15,right:15}});
-
-    cy=doc.lastAutoTable.finalY+12;
-    doc.setFont('helvetica','bold'); doc.setTextColor(...blue); doc.setFontSize(12);
-    doc.text('Qualitative Breakdown',15,cy);
-    const qRows=Object.entries(hotel.reviewMetrics||{}).map(([k,m])=>[
-      k.replace(/([A-Z])/g,' $1').trim(),`${m.rating.toFixed(1)}/5`,m.summary
-    ]);
-    doc.autoTable({startY:cy+5,head:[['Factor','Score','Guest Sentiment Summary']],body:qRows,
-      styles:{fontSize:8,cellPadding:3},
-      columnStyles:{0:{cellWidth:38,fontStyle:'bold'},1:{cellWidth:20,halign:'center'},2:{cellWidth:122}},
-      margin:{left:15,right:15}});
-  });
-
-  doc.save(`LuxeStay_${state.city}_Report.pdf`);
-  toast('PDF exported!');
+  doc.save(`LuxeStay_${state.city}_ReviewMatrix.pdf`);
+  toast('Review Matrix PDF exported!');
 }
 
 // ═══════════════════════════════════════════════════
@@ -1487,41 +1658,70 @@ function makeMarkerIcon(label) {
   });
 }
 
+function getMapProvider() {
+  const loc = (state.city + ' ' + state.district).toLowerCase();
+  const chinaKW = ['shanghai','beijing','shenzhen','guangzhou','chengdu','hangzhou','nanjing','chongqing','xian','wuhan','china'];
+  const koreaKW = ['seoul','busan','jeju','incheon','daegu','daejeon','gangnam','hongdae','myeongdong','korea'];
+  if (chinaKW.some(k => loc.includes(k))) return 'amap';
+  if (koreaKW.some(k => loc.includes(k))) return 'kakao';
+  return 'google';
+}
+
+function hotelMapUrl(hotelName) {
+  const q = encodeURIComponent(hotelName + ' ' + state.city);
+  const provider = getMapProvider();
+  if (provider === 'amap')  return `https://www.amap.com/search?query=${q}`;
+  if (provider === 'kakao') return `https://map.kakao.com/?q=${q}`;
+  return `https://www.google.com/maps/search/${q}`;
+}
+
+function mapProviderLabel() {
+  const p = getMapProvider();
+  if (p === 'amap')  return 'Amap';
+  if (p === 'kakao') return 'Kakao Map';
+  return 'Google Maps';
+}
+
 async function renderMap(hotels) {
   const hotelsWithCoords = hotels.filter(h => h.lat && h.lng);
+  const mapSection = document.getElementById('map-section');
 
-  // No coordinates at all — show fallback Google Maps search link
+  // No coordinates — show individual map links per hotel
   if (!hotelsWithCoords.length) {
-    document.getElementById('map-section').classList.remove('hidden');
+    const provider = mapProviderLabel();
+    const linkList = hotels.slice(0,10).map((h,i) =>
+      `<a href="${hotelMapUrl(h.name)}" target="_blank" rel="noopener"
+         style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;text-decoration:none;color:#1e293b;font-size:12px;font-weight:800;margin-bottom:6px;">
+         <span style="background:#1d4ed8;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${i+1}</span>
+         <span style="flex:1">${h.name}</span>
+         <span style="font-size:10px;color:#3b82f6;font-weight:700">${provider} ↗</span>
+       </a>`
+    ).join('');
+
+    mapSection.classList.remove('hidden');
+    document.getElementById('hotel-map').style.height = 'auto';
     document.getElementById('hotel-map').innerHTML = `
-      <div class="flex flex-col items-center justify-center h-full gap-4 bg-slate-50">
-        <svg class="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z"/>
-        </svg>
-        <p class="text-sm font-bold text-slate-500">Map coordinates not available (AI-only mode)</p>
-        <a href="https://www.google.com/maps/search/${encodeURIComponent(hotels.map(h=>h.name).join(' OR ') + ' ' + state.city)}"
-           target="_blank" rel="noopener"
-           class="bg-blue-700 text-white text-xs font-black px-5 py-2.5 rounded-2xl hover:bg-blue-800 transition-all">
-          View on Google Maps ↗
-        </a>
+      <div style="padding:20px 24px;background:#f8fafc">
+        <p style="font-size:11px;font-weight:900;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">
+          Click to view each hotel on ${provider} (coordinates not yet available — deploy server.js to enable live map)
+        </p>
+        ${linkList}
       </div>`;
-    document.getElementById('map-count').textContent = `(coordinates unavailable — enable Google Places API)`;
+    document.getElementById('map-count').textContent = `(${hotels.length} hotels — view individually on ${provider})`;
     return;
   }
 
-  // Calculate center from average of all hotel coordinates
+  // We have coordinates — render Leaflet map
+  document.getElementById('hotel-map').style.height = '440px';
   const avgLat = hotelsWithCoords.reduce((s,h)=>s+h.lat,0) / hotelsWithCoords.length;
   const avgLng = hotelsWithCoords.reduce((s,h)=>s+h.lng,0) / hotelsWithCoords.length;
 
-  // Init or reset map
   initMap(avgLat, avgLng, 13);
 
-  // Clear old markers
   _mapMarkers.forEach(m => m.remove());
   _mapMarkers = [];
   if (_radiusCircle) { _radiusCircle.remove(); _radiusCircle = null; }
 
-  // Draw radius circle around first hotel if Near Location set
   if (state.nearLocation && hotelsWithCoords.length) {
     _radiusCircle = L.circle([avgLat, avgLng], {
       radius: state.radiusKm * 1000,
@@ -1533,7 +1733,6 @@ async function renderMap(hotels) {
     document.getElementById('radius-legend').classList.add('hidden');
   }
 
-  // Add markers for each hotel with coordinates
   const bounds = [];
   hotelsWithCoords.forEach((hotel, idx) => {
     const shortName = hotel.name.length > 22 ? hotel.name.slice(0,20)+'…' : hotel.name;
@@ -1541,31 +1740,25 @@ async function renderMap(hotels) {
       icon: makeMarkerIcon(`${idx+1}. ${shortName}`)
     }).addTo(_map);
 
-    const cur = state.currency;
     const bestPrice = (() => {
       const prices = (hotel.roomTypes||[]).flatMap(r => Object.values(r.prices||{}).filter(p=>p>0));
-      if (!prices.length) return null;
-      return Math.min(...prices);
+      return prices.length ? Math.min(...prices) : null;
     })();
-    const priceStr = bestPrice ? `~${fmtPrice(bestPrice, cur)}/night` : 'Price N/A';
+    const priceStr = bestPrice ? `~${fmtPrice(bestPrice, state.currency)}/night` : 'Price N/A';
 
     marker.bindPopup(`
       <div style="font-family:'Inter',sans-serif;min-width:200px;padding:4px">
         <div style="font-weight:900;font-size:13px;color:#1e293b;margin-bottom:6px">${hotel.name}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          <span style="background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">
-            LuxeScore ${hotel.compositeScore}/10
-          </span>
-          <span style="background:#fefce8;color:#92400e;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">
-            ★ ${hotel.guestRating} (${(hotel.reviewCount||0).toLocaleString()})
-          </span>
+          <span style="background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">LuxeScore ${hotel.compositeScore}/10</span>
+          <span style="background:#fefce8;color:#92400e;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">★ ${hotel.guestRating}</span>
         </div>
         <div style="font-size:11px;color:#475569;margin-bottom:4px">🚇 ${hotel.proximity?.mrt||'—'}</div>
         <div style="font-size:12px;font-weight:900;color:#059669">${priceStr} <span style="color:#94a3b8;font-weight:400;font-size:10px">est.</span></div>
         ${hotel.address ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${hotel.address}</div>` : ''}
-        <a href="https://www.google.com/maps/search/${encodeURIComponent(hotel.name + ' ' + state.city)}"
-           target="_blank" style="display:inline-block;margin-top:8px;font-size:10px;font-weight:900;color:#1d4ed8">
-          Open in Google Maps ↗
+        <a href="${hotelMapUrl(hotel.name)}" target="_blank"
+           style="display:inline-block;margin-top:8px;font-size:10px;font-weight:900;color:#1d4ed8">
+          Open in ${mapProviderLabel()} ↗
         </a>
       </div>`, { maxWidth: 280 });
 
@@ -1573,14 +1766,10 @@ async function renderMap(hotels) {
     bounds.push([hotel.lat, hotel.lng]);
   });
 
-  // Fit map to show all markers
-  if (bounds.length > 1) {
-    _map.fitBounds(bounds, { padding: [40, 40] });
-  }
+  if (bounds.length > 1) _map.fitBounds(bounds, { padding: [40, 40] });
 
-  document.getElementById('map-section').classList.remove('hidden');
-  document.getElementById('map-count').textContent =
-    `${hotelsWithCoords.length} of ${hotels.length} hotels mapped`;
+  mapSection.classList.remove('hidden');
+  document.getElementById('map-count').textContent = `${hotelsWithCoords.length} of ${hotels.length} hotels mapped`;
   setTimeout(() => _map.invalidateSize(), 100);
 }
 
@@ -1623,6 +1812,7 @@ function toggleAccomPill(el) {
 function init() {
   buildDatePicker('checkin-picker',  'Check-In Date',  state.checkIn,  'checkIn');
   buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
+  updateNightsDisplay();
   document.getElementById('currency-select').value = state.currency;
   buildAccomPills();
   // Mark initially-active pills
