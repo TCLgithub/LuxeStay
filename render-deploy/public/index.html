@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LuxeStay — Screener Intelligence</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+  body { font-family: 'Inter', sans-serif; }
+  .animate-spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .animate-pulse { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .fade-in { animation: fadeIn 0.5s ease-in; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  select { -webkit-appearance:none; appearance:none; }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:#f1f5f9; }
+  ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px; }
+  .toast { position:fixed; bottom:24px; right:24px; z-index:9999; background:#1e293b; color:#fff; padding:12px 20px; border-radius:16px; font-size:13px; font-weight:700; box-shadow:0 8px 32px rgba(0,0,0,0.2); transform:translateY(80px); transition:transform .3s ease; }
+  .toast.show { transform:translateY(0); }
+  .fb-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; background:#cbd5e1; flex-shrink:0; }
+  .fb-dot.trying { background:#f59e0b; animation:pulse 1s infinite; }
+  .fb-dot.ok  { background:#10b981; }
+  .fb-dot.err { background:#ef4444; }
+  .fb-dot.skip{ background:#cbd5e1; }
+  .step-icon { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:900; flex-shrink:0; }
+  .step-icon.pending { background:#f1f5f9; color:#94a3b8; }
+  .step-icon.active  { background:#f59e0b; color:#fff; animation:pulse 1s infinite; }
+  .step-icon.done    { background:#10b981; color:#fff; }
+  .step-icon.skip    { background:#e2e8f0; color:#94a3b8; }
+  .badge-real { display:inline-flex; align-items:center; gap:4px; background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; padding:2px 8px; border-radius:8px; font-size:9px; font-weight:900; text-transform:uppercase; letter-spacing:.05em; }
+  .badge-est  { display:inline-flex; align-items:center; gap:4px; background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; padding:2px 8px; border-radius:8px; font-size:9px; font-weight:900; text-transform:uppercase; letter-spacing:.05em; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+<!-- TOAST -->
+<div id="toast" class="toast"></div>
+
+<!-- SETTINGS OVERLAY -->
+<div id="settings-overlay" class="fixed inset-0 bg-black/40 z-40 hidden" onclick="closeSettings()"></div>
+<div id="settings-panel" class="fixed top-0 right-0 h-full w-84 bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 overflow-y-auto" style="width:340px">
+  <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-900">
+    <div>
+      <h2 class="text-lg font-black text-white uppercase tracking-wider">API Settings</h2>
+      <p class="text-[10px] text-slate-400 mt-0.5">Keys stored locally in browser</p>
+    </div>
+    <button onclick="closeSettings()" class="text-slate-400 hover:text-white text-2xl font-bold leading-none">&times;</button>
+  </div>
+  <div id="settings-proxy-banner" class="hidden bg-blue-50 border-b border-blue-100 px-6 py-3">
+    <p class="text-xs font-bold text-blue-700">Proxy mode — keys managed server-side via environment variables.</p>
+  </div>
+  <div id="settings-keys" class="p-6 space-y-5"></div>
+  <div class="px-6 pb-6 space-y-3">
+    <button onclick="testAllAPIs()" class="w-full bg-slate-900 text-white font-black py-3 rounded-2xl text-sm hover:bg-slate-700 transition-all">
+      Test All APIs
+    </button>
+    <p class="text-[10px] text-slate-400 text-center">Keys never leave your browser in local mode.</p>
+  </div>
+</div>
+
+<!-- HEADER -->
+<header class="bg-blue-800 text-white shadow-2xl sticky top-0 z-30">
+  <div class="max-w-screen-2xl mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+    <div class="flex items-center gap-4">
+      <svg class="w-9 h-9 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"/>
+      </svg>
+      <div>
+        <h1 class="text-2xl font-black tracking-tight uppercase leading-none">LuxeStay</h1>
+        <p class="text-[10px] font-black text-blue-200 uppercase tracking-[0.4em] mt-0.5">Screener Intelligence</p>
+      </div>
+    </div>
+    <!-- Data source indicator only -->
+    <div id="data-source-badge" class="hidden items-center gap-2 bg-blue-900/60 px-4 py-2 rounded-2xl border border-blue-700/50 text-xs font-black">
+      <span id="data-source-text"></span>
+    </div>
+  </div>
+</header>
+
+<!-- MAIN -->
+<main class="max-w-screen-2xl mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-4 gap-10">
+
+  <!-- SIDEBAR -->
+  <aside class="lg:col-span-1">
+    <form id="search-form" onsubmit="handleSearch(event)" class="bg-white p-8 rounded-[40px] shadow-xl border border-slate-100 sticky top-28 space-y-6">
+      <h2 class="text-xl font-black text-slate-900 flex items-center gap-3">
+        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/>
+        </svg>
+        Aggregator Settings
+      </h2>
+
+      <!-- City + Exchange Rate -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Search City / Island</label>
+        <div class="relative">
+          <svg class="w-5 h-5 absolute left-4 top-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/>
+          </svg>
+          <input type="text" id="city" value="Taipei" oninput="onCityInput(this.value)"
+            class="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+            placeholder="e.g. Taipei, Kuala Lumpur"/>
+        </div>
+        <!-- Currency + exchange rate pill -->
+        <div class="flex items-center gap-2 pt-1">
+          <span class="text-[10px] font-black text-slate-400">Currency:</span>
+          <select id="currency-select" onchange="onCurrencyChange(this.value)"
+            class="bg-blue-50 border border-blue-200 text-blue-700 font-black text-[11px] rounded-xl px-2 py-1 outline-none cursor-pointer">
+            <option value="MYR">MYR</option><option value="USD">USD</option><option value="TWD" selected>TWD</option>
+            <option value="SGD">SGD</option><option value="EUR">EUR</option><option value="THB">THB</option>
+            <option value="JPY">JPY</option><option value="GBP">GBP</option><option value="IDR">IDR</option>
+            <option value="VND">VND</option><option value="HKD">HKD</option><option value="KRW">KRW</option>
+            <option value="AUD">AUD</option><option value="AED">AED</option><option value="INR">INR</option>
+            <option value="PHP">PHP</option><option value="CNY">CNY</option><option value="CAD">CAD</option>
+            <option value="NZD">NZD</option>
+          </select>
+          <span id="exchange-rate-badge" class="hidden text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-xl whitespace-nowrap"></span>
+        </div>
+      </div>
+
+      <!-- District -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">District / Area <span class="font-normal normal-case">(optional)</span></label>
+        <input type="text" id="district" oninput="state.district=this.value"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+          placeholder="e.g. Xinyi, KLCC, Orchard Road"/>
+      </div>
+
+      <!-- Near Location + Radius -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Near Location <span class="font-normal normal-case">(optional)</span></label>
+        <input type="text" id="near-location" oninput="state.nearLocation=this.value"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+          placeholder="e.g. Taipei 101, KLCC, Sentosa"/>
+        <div class="flex items-center gap-2 pt-1">
+          <span class="text-[10px] font-black text-slate-400 whitespace-nowrap">Within</span>
+          <select id="search-radius" onchange="state.radiusKm=parseInt(this.value)"
+            class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-[11px] font-black outline-none focus:border-blue-400 cursor-pointer">
+            <option value="2">2 km</option>
+            <option value="5" selected>5 km</option>
+            <option value="10">10 km</option>
+            <option value="15">15 km</option>
+            <option value="20">20 km</option>
+            <option value="50">50 km (city-wide)</option>
+          </select>
+          <span class="text-[10px] font-black text-slate-400 whitespace-nowrap">from location</span>
+        </div>
+      </div>
+
+      <!-- Preferred Hotel -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Preferred Hotel <span class="font-normal normal-case">(optional)</span></label>
+        <input type="text" id="preferred-hotel"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+          placeholder="e.g. Grand Hyatt"/>
+      </div>
+
+      <!-- Dates -->
+      <div class="bg-slate-50 p-5 rounded-[32px] border border-slate-100 space-y-5 shadow-inner">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/>
+          </svg>
+          <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Date Selection</span>
+        </div>
+        <div id="checkin-picker"></div>
+        <div id="checkout-picker"></div>
+      </div>
+
+      <!-- Accommodation Type — pill toggles -->
+      <div class="space-y-2">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Accommodation Type</label>
+        <div id="accom-pills" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <!-- MRT / Public Transport Distance -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Max Distance to MRT</label>
+        <select id="mrt-distance" onchange="state.maxMRTWalk=this.value"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm cursor-pointer">
+          <option value="any">Any distance</option>
+          <option value="walk">Walking distance only</option>
+          <option value="5min">Within 5 min walk</option>
+          <option value="10min" selected>Within 10 min walk</option>
+          <option value="15min">Within 15 min walk</option>
+          <option value="1km">Within 1 km</option>
+        </select>
+      </div>
+
+      <!-- Min Rating -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Min Guest Rating</label>
+        <select id="min-rating" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm cursor-pointer">
+          <option value="4.0">4.0+</option>
+          <option value="4.2">4.2+</option>
+          <option value="4.5" selected>4.5+</option>
+          <option value="4.7">4.7+</option>
+        </select>
+      </div>
+
+      <!-- Budget -->
+      <div class="space-y-2">
+        <label class="block text-[10px] font-black text-blue-700 uppercase tracking-widest">Budget Per Night (MYR)</label>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="relative">
+            <span class="absolute left-3 top-2.5 text-[8px] font-black text-slate-300">MIN</span>
+            <input type="number" id="min-price" value="500" class="w-full pl-8 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] font-black outline-none focus:border-blue-500"/>
+          </div>
+          <div class="relative">
+            <span class="absolute left-3 top-2.5 text-[8px] font-black text-slate-300">MAX</span>
+            <input type="number" id="max-price" value="1500" class="w-full pl-8 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] font-black outline-none focus:border-blue-500"/>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step indicators -->
+      <div id="step-log" class="hidden bg-slate-50 rounded-2xl border border-slate-100 p-4 space-y-2">
+        <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Search Progress</p>
+        <div id="step-1" class="flex items-center gap-3">
+          <div class="step-icon pending">1</div>
+          <div>
+            <p class="text-[11px] font-black text-slate-600">Google Maps</p>
+            <p id="step-1-sub" class="text-[10px] text-slate-400">Real hotels &amp; ratings</p>
+          </div>
+        </div>
+        <div id="step-2" class="flex items-center gap-3">
+          <div class="step-icon pending">2</div>
+          <div>
+            <p class="text-[11px] font-black text-slate-600">AI Analysis</p>
+            <p id="step-2-sub" class="text-[10px] text-slate-400">Prices, quality scores, pros/cons</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Provider fallback log -->
+      <div id="fb-log" class="hidden bg-slate-50 rounded-2xl border border-slate-100 p-4 space-y-1.5">
+        <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">AI Provider Status</p>
+        <div id="fb-entries" class="space-y-1.5"></div>
+      </div>
+
+      <!-- Submit -->
+      <button type="submit" id="search-btn"
+        class="w-full bg-blue-700 hover:bg-blue-800 text-white font-black py-5 rounded-3xl flex items-center justify-center gap-4 transition-all shadow-2xl active:scale-95 disabled:opacity-60">
+        <svg id="search-icon" class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+        </svg>
+        <div id="search-spinner" class="hidden w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+        <span id="search-btn-text">Perform AI Scan</span>
+      </button>
+    </form>
+  </aside>
+
+  <!-- RESULTS -->
+  <section class="lg:col-span-3 space-y-10">
+
+    <!-- Controls bar -->
+    <div id="results-controls" class="hidden">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-8 rounded-[40px] shadow-lg border border-slate-100">
+        <div class="flex gap-5">
+          <button onclick="setViewMode('comparison')" id="btn-comparison"
+            class="px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl scale-105">
+            Rate Comparison
+          </button>
+          <button onclick="setViewMode('qualitative')" id="btn-qualitative"
+            class="px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
+            Review Matrix
+          </button>
+        </div>
+        <div class="flex flex-wrap items-center gap-4">
+          <button onclick="exportPDF()"
+            class="bg-emerald-600 text-white px-6 py-4 rounded-[20px] font-black text-[11px] flex items-center gap-3 hover:bg-emerald-700 shadow-xl transition-all active:scale-95">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/>
+            </svg>
+            Executive PDF
+          </button>
+          <button onclick="exportExcel()"
+            class="bg-blue-700 text-white px-6 py-4 rounded-[20px] font-black text-[11px] flex items-center gap-3 hover:bg-blue-800 shadow-xl transition-all active:scale-95">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+            </svg>
+            Room Catalog Excel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Map Panel -->
+    <div id="map-section" class="hidden bg-white rounded-[40px] shadow-lg border border-slate-100 overflow-hidden">
+      <div class="flex items-center justify-between px-8 py-4 border-b border-slate-100">
+        <div class="flex items-center gap-3">
+          <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z"/></svg>
+          <span class="text-sm font-black text-slate-700 uppercase tracking-wider">Hotel Map</span>
+          <span id="map-count" class="text-[10px] font-black text-slate-400"></span>
+        </div>
+        <button onclick="toggleMap()" id="map-toggle-btn" class="text-[11px] font-black text-blue-600 hover:text-blue-800 transition-colors">Hide Map ▲</button>
+      </div>
+      <div id="map-inner" class="">
+        <div id="hotel-map" style="height:440px;"></div>
+        <div id="map-legend" class="px-8 py-3 bg-slate-50 border-t border-slate-100 flex flex-wrap gap-4 text-[10px] font-black text-slate-500">
+          <span class="flex items-center gap-1.5"><span style="background:#1d4ed8;width:12px;height:12px;border-radius:50%;display:inline-block;"></span> Shortlisted Hotel</span>
+          <span id="radius-legend" class="hidden flex items-center gap-1.5"><span style="background:#3b82f6;width:12px;height:12px;border-radius:2px;display:inline-block;opacity:0.3;"></span> Search Radius</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading skeleton -->
+    <div id="loading-skeleton" class="hidden space-y-8">
+      <div class="bg-white p-12 rounded-[50px] animate-pulse shadow-sm border border-slate-50">
+        <div class="h-8 w-2/5 bg-slate-100 rounded-xl mb-8"></div>
+        <div class="h-64 bg-slate-50 rounded-[40px]"></div>
+      </div>
+      <div class="bg-white p-12 rounded-[50px] animate-pulse shadow-sm border border-slate-50">
+        <div class="h-8 w-1/3 bg-slate-100 rounded-xl mb-8"></div>
+        <div class="h-48 bg-slate-50 rounded-[40px]"></div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="error-box" class="hidden bg-rose-50 border border-rose-200 text-rose-700 p-8 rounded-[32px] font-bold text-sm leading-relaxed"></div>
+
+    <!-- Results -->
+    <div id="results-container" class="space-y-10"></div>
+  </section>
+</main>
+
+<footer class="max-w-screen-2xl mx-auto px-6 py-16 text-center text-slate-400 text-[11px] uppercase font-black tracking-[0.5em] opacity-60">
+  AI Aggregated Comparative Intelligence • LuxeStay 2025
+</footer>
+
+<script>
+// ═══════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════
+const PROVIDERS = ['gemini','deepseek','anthropic','openai'];
+const P_LABELS  = { gemini:'Gemini 2.0', deepseek:'DeepSeek', anthropic:'Claude Haiku', openai:'GPT-4o Mini' };
+const DEFAULT_MODELS = {
+  gemini:    'gemini-2.0-flash',
+  deepseek:  'deepseek-chat',
+  anthropic: 'claude-haiku-4-5-20251001',
+  openai:    'gpt-4o-mini'
+};
+const CURRENCIES = [
+  {code:'MYR',symbol:'RM'}, {code:'USD',symbol:'$'},   {code:'TWD',symbol:'NT$'},
+  {code:'SGD',symbol:'S$'}, {code:'EUR',symbol:'€'},   {code:'THB',symbol:'฿'},
+  {code:'JPY',symbol:'¥'},  {code:'GBP',symbol:'£'},   {code:'IDR',symbol:'Rp'},
+  {code:'VND',symbol:'₫'},  {code:'HKD',symbol:'HK$'}, {code:'KRW',symbol:'₩'},
+  {code:'AUD',symbol:'A$'}, {code:'AED',symbol:'AED'}, {code:'INR',symbol:'₹'},
+  {code:'PHP',symbol:'₱'},  {code:'CNY',symbol:'¥'},   {code:'CAD',symbol:'C$'},
+  {code:'NZD',symbol:'NZ$'},{code:'LKR',symbol:'Rs'},  {code:'NPR',symbol:'Rs'}
+];
+const CITY_CURRENCY_MAP = {
+  // Malaysia
+  'kuala lumpur':'MYR','klcc':'MYR','bukit bintang':'MYR','kl':'MYR',
+  'malaysia':'MYR','penang':'MYR','george town':'MYR','langkawi':'MYR',
+  'johor bahru':'MYR','jb':'MYR','kota kinabalu':'MYR','malacca':'MYR',
+  'melaka':'MYR','ipoh':'MYR','putrajaya':'MYR','cyberjaya':'MYR',
+  // Taiwan
+  'taipei':'TWD','taiwan':'TWD','kaohsiung':'TWD','taichung':'TWD',
+  'tainan':'TWD','hsinchu':'TWD','xinyi':'TWD','zhongshan':'TWD',
+  // Singapore
+  'singapore':'SGD','orchard':'SGD','marina bay':'SGD','sentosa':'SGD',
+  // Thailand
+  'bangkok':'THB','thailand':'THB','phuket':'THB','chiang mai':'THB',
+  'pattaya':'THB','koh samui':'THB','krabi':'THB','hua hin':'THB',
+  'sukhumvit':'THB','silom':'THB',
+  // Japan
+  'tokyo':'JPY','kyoto':'JPY','osaka':'JPY','japan':'JPY','sapporo':'JPY',
+  'fukuoka':'JPY','hiroshima':'JPY','nara':'JPY','yokohama':'JPY','kobe':'JPY',
+  'shinjuku':'JPY','shibuya':'JPY','ginza':'JPY',
+  // UK
+  'london':'GBP','uk':'GBP','edinburgh':'GBP','manchester':'GBP','birmingham':'GBP',
+  // Europe
+  'paris':'EUR','france':'EUR','berlin':'EUR','germany':'EUR','barcelona':'EUR',
+  'madrid':'EUR','spain':'EUR','rome':'EUR','italy':'EUR','amsterdam':'EUR',
+  'netherlands':'EUR','vienna':'EUR','austria':'EUR','prague':'EUR',
+  // USA
+  'new york':'USD','usa':'USD','los angeles':'USD','miami':'USD',
+  'san francisco':'USD','chicago':'USD','las vegas':'USD','hawaii':'USD',
+  // Indonesia
+  'bali':'IDR','jakarta':'IDR','indonesia':'IDR','lombok':'IDR',
+  'yogyakarta':'IDR','surabaya':'IDR','seminyak':'IDR','ubud':'IDR',
+  'nusa dua':'IDR','canggu':'IDR',
+  // Vietnam
+  'ho chi minh':'VND','hanoi':'VND','vietnam':'VND','da nang':'VND',
+  'hoi an':'VND','nha trang':'VND','phu quoc':'VND',
+  // Hong Kong
+  'hong kong':'HKD','kowloon':'HKD','tsim sha tsui':'HKD','wan chai':'HKD',
+  // South Korea
+  'seoul':'KRW','korea':'KRW','busan':'KRW','jeju':'KRW','gangnam':'KRW',
+  // Australia
+  'sydney':'AUD','melbourne':'AUD','australia':'AUD','brisbane':'AUD',
+  'perth':'AUD','gold coast':'AUD','cairns':'AUD',
+  // UAE
+  'dubai':'AED','abu dhabi':'AED','uae':'AED','sharjah':'AED',
+  // India
+  'mumbai':'INR','delhi':'INR','india':'INR','bangalore':'INR','goa':'INR',
+  'new delhi':'INR','chennai':'INR','kolkata':'INR','hyderabad':'INR',
+  // Philippines
+  'manila':'PHP','philippines':'PHP','cebu':'PHP','boracay':'PHP','palawan':'PHP',
+  'makati':'PHP','bgc':'PHP','bonifacio':'PHP',
+  // China
+  'shanghai':'CNY','beijing':'CNY','china':'CNY','shenzhen':'CNY',
+  'guangzhou':'CNY','chengdu':'CNY','hong kong':'HKD',
+  // Maldives
+  'maldives':'USD','male':'USD',
+  // Cambodia
+  'siem reap':'USD','phnom penh':'USD','cambodia':'USD',
+  // Canada
+  'toronto':'CAD','vancouver':'CAD','canada':'CAD','montreal':'CAD',
+  // New Zealand
+  'auckland':'NZD','new zealand':'NZD','queenstown':'NZD','christchurch':'NZD',
+  // Sri Lanka
+  'colombo':'LKR','sri lanka':'LKR',
+  // Nepal
+  'kathmandu':'NPR','nepal':'NPR',
+};
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ═══════════════════════════════════════════════════
+// PROXY DETECTION
+// ═══════════════════════════════════════════════════
+const PROXY_MODE = (() => {
+  const h = window.location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1') return true;
+  if (h.endsWith('.onrender.com') || h.endsWith('.netlify.app') || h.endsWith('.vercel.app') || h.endsWith('.railway.app')) return true;
+  if (new URLSearchParams(location.search).get('proxy') === '1') return true;
+  return false;
+})();
+
+// ═══════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════
+let state = {
+  city: 'Taipei', district: '', nearLocation: '', preferredHotel: '',
+  checkIn: todayStr(), checkOut: offsetDay(3),
+  accommodationTypes: ['Hotel','Resort'], maxMRTWalk: 'any', minRating: 4.5,
+  minPrice: 500, maxPrice: 1500, currency: 'TWD', radiusKm: 5
+};
+let results = [];
+let viewMode = 'comparison';
+let lastRealHotels = null; // track whether we got real data
+
+function todayStr() { return new Date().toISOString().split('T')[0]; }
+function offsetDay(n) { return new Date(Date.now() + 86400000*n).toISOString().split('T')[0]; }
+function getNights() { return Math.max(1, Math.ceil((new Date(state.checkOut) - new Date(state.checkIn)) / 86400000)); }
+
+// ═══════════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════════
+let _toastTimer;
+function toast(msg, ms=2800) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+// ═══════════════════════════════════════════════════
+// SETTINGS PANEL
+// ═══════════════════════════════════════════════════
+function openSettings()  { document.getElementById('settings-panel').style.transform='translateX(0)'; document.getElementById('settings-overlay').classList.remove('hidden'); }
+function closeSettings() { document.getElementById('settings-panel').style.transform=''; document.getElementById('settings-overlay').classList.add('hidden'); }
+
+function buildSettingsPanel() {
+  if (PROXY_MODE) {
+    document.getElementById('settings-proxy-banner').classList.remove('hidden');
+    document.getElementById('settings-keys').innerHTML = `
+      <p class="text-sm font-bold text-slate-600 mb-4">Set these in Render.com → Environment Variables:</p>
+      <div class="space-y-2">
+        ${[
+          ['GOOGLE_PLACES_API_KEY','Google Maps — real hotel data'],
+          ['GEMINI_API_KEY','Google Gemini (primary AI)'],
+          ['ANTHROPIC_API_KEY','Claude Haiku (fallback 3)'],
+          ['OPENAI_API_KEY','GPT-4o Mini (fallback 4)'],
+          ['DEEPSEEK_API_KEY','DeepSeek (fallback 2)'],
+        ].map(([k,d])=>`
+          <div class="bg-slate-50 rounded-xl p-3 border border-slate-100">
+            <p class="text-[11px] font-black text-slate-700">${k}</p>
+            <p class="text-[10px] text-slate-400">${d}</p>
+          </div>`).join('')}
+      </div>`;
+    return;
+  }
+
+  const providerRows = [
+    {id:'places', label:'Google Places', sub:'Real hotel data', model:false},
+    ...PROVIDERS.map(p => ({id:p, label:P_LABELS[p], sub:'AI fallback', model:true}))
+  ];
+
+  document.getElementById('settings-keys').innerHTML = providerRows.map(p => `
+    <div class="space-y-2 pb-5 border-b border-slate-100">
+      <div class="flex items-center justify-between">
+        <p class="text-[11px] font-black text-slate-600">${p.label}</p>
+        ${p.id==='places'?'<span class="badge-real">Real Data</span>':'<span class="badge-est">AI</span>'}
+      </div>
+      <p class="text-[10px] text-slate-400">${p.sub}</p>
+      <input type="password" placeholder="API Key"
+        value="${localStorage.getItem('ls_key_'+p.id)||''}"
+        oninput="localStorage.setItem('ls_key_${p.id}',this.value)"
+        class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-blue-400"/>
+      ${p.model ? `<input type="text" placeholder="Model (e.g. ${DEFAULT_MODELS[p.id]||''})"
+        value="${localStorage.getItem('ls_model_'+p.id)||DEFAULT_MODELS[p.id]||''}"
+        oninput="localStorage.setItem('ls_model_${p.id}',this.value)"
+        class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-blue-400"/>` : ''}
+    </div>`).join('');
+}
+
+async function testAllAPIs() {
+  toast('Testing…', 10000);
+  for (const p of PROVIDERS) {
+    try {
+      const key   = PROXY_MODE ? '' : (localStorage.getItem('ls_key_'+p)||'');
+      const model = PROXY_MODE ? DEFAULT_MODELS[p] : (localStorage.getItem('ls_model_'+p)||DEFAULT_MODELS[p]);
+      await callProvider(p, 'Reply with the single word: ok', key, model);
+      toast(`✓ ${P_LABELS[p]} OK`, 2000);
+    } catch(e) { toast(`✗ ${P_LABELS[p]}: ${e.message.slice(0,50)}`, 3000); }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// DATE PICKERS
+// ═══════════════════════════════════════════════════
+function buildDatePicker(containerId, label, dateStr, field) {
+  const [y,m,d] = dateStr.split('-').map(Number);
+  document.getElementById(containerId).innerHTML = `
+    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">${label}</label>
+    <div class="grid grid-cols-3 gap-1">
+      <select data-field="${field}" data-part="day" onchange="syncDate('${containerId}','${field}')"
+        class="bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-black outline-none focus:ring-2 focus:ring-blue-500/20 text-center cursor-pointer shadow-sm">
+        ${Array.from({length:31},(_,i)=>`<option value="${i+1}"${i+1===d?' selected':''}>${i+1}</option>`).join('')}
+      </select>
+      <select data-field="${field}" data-part="month" onchange="syncDate('${containerId}','${field}')"
+        class="bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-black outline-none focus:ring-2 focus:ring-blue-500/20 text-center cursor-pointer shadow-sm">
+        ${MONTHS.map((mn,i)=>`<option value="${i}"${i===m-1?' selected':''}>${mn}</option>`).join('')}
+      </select>
+      <select data-field="${field}" data-part="year" onchange="syncDate('${containerId}','${field}')"
+        class="bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-black outline-none focus:ring-2 focus:ring-blue-500/20 text-center cursor-pointer shadow-sm">
+        ${[2025,2026,2027].map(yr=>`<option value="${yr}"${yr===y?' selected':''}>${yr}</option>`).join('')}
+      </select>
+    </div>`;
+}
+function syncDate(containerId, field) {
+  const sel = document.querySelectorAll(`#${containerId} select`);
+  const dd  = sel[0].value.toString().padStart(2,'0');
+  const mm  = (parseInt(sel[1].value)+1).toString().padStart(2,'0');
+  state[field] = `${sel[2].value}-${mm}-${dd}`;
+}
+
+// ═══════════════════════════════════════════════════
+// CITY / CURRENCY
+// ═══════════════════════════════════════════════════
+function onCurrencyChange(v) { state.currency = v; }
+function onCityInput(v) {
+  state.city = v;
+  autoDetectCurrency(v + ' ' + (document.getElementById('district')?.value || ''));
+}
+function autoDetectCurrency(combined) {
+  const lower = combined.toLowerCase().trim();
+  for (const [k, code] of Object.entries(CITY_CURRENCY_MAP)) {
+    if (lower.includes(k)) {
+      if (state.currency !== code) {
+        state.currency = code;
+        const sel = document.getElementById('currency-select');
+        sel.value = code;
+        sel.classList.add('ring-2','ring-amber-400','ring-offset-1');
+        setTimeout(() => sel.classList.remove('ring-2','ring-amber-400','ring-offset-1'), 1500);
+      }
+      break;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// STEP INDICATORS
+// ═══════════════════════════════════════════════════
+function setStep(n, status, sub='') {
+  const el    = document.querySelector(`#step-${n} .step-icon`);
+  const subEl = document.getElementById(`step-${n}-sub`);
+  if (!el) return;
+  el.className = `step-icon ${status}`;
+  el.textContent = status === 'done' ? '✓' : status === 'skip' ? '–' : n;
+  if (sub && subEl) subEl.textContent = sub;
+}
+
+// ═══════════════════════════════════════════════════
+// GOOGLE PLACES — FETCH REAL HOTELS
+// ═══════════════════════════════════════════════════
+async function fetchRealHotels() {
+  const key = PROXY_MODE ? '' : (localStorage.getItem('ls_key_places') || '');
+  if (!key && !PROXY_MODE) throw new Error('No Google Places API key set in Settings');
+
+  let r;
+  const accomQuery = state.accommodationTypes.length
+    ? state.accommodationTypes.join(' or ')
+    : 'hotel resort';
+  const locationQuery = [
+    state.nearLocation || '',
+    state.district || '',
+    state.city
+  ].filter(Boolean).join(', ');
+  const textQuery = `top rated ${accomQuery} in ${locationQuery}`;
+
+  if (PROXY_MODE) {
+    r = await fetch('/api/places', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city: locationQuery, maxResults: 15 })
+    });
+  } else {
+    r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.reviews,places.websiteUri,places.formattedAddress',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        textQuery,
+        includedType: 'lodging',
+        maxResultCount: 15
+      })
+    });
+  }
+
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Places API HTTP ${r.status}`);
+  }
+
+  const data = await r.json();
+  const places = data.places || [];
+  if (places.length === 0) throw new Error('No hotels found via Google Maps for this city');
+
+  return places
+    .filter(p => (p.rating || 0) >= state.minRating)
+    .map(p => ({
+      name:        p.displayName?.text || 'Unknown Hotel',
+      rating:      p.rating || 0,
+      reviewCount: p.userRatingCount || 0,
+      priceLevel:  p.priceLevel || '',
+      website:     p.websiteUri || '',
+      address:     p.formattedAddress || '',
+      lat:         p.location?.latitude  || null,
+      lng:         p.location?.longitude || null,
+      reviews:     (p.reviews || [])
+        .map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0, 300) }))
+        .filter(rv => rv.text)
+    }));
+}
+
+// ═══════════════════════════════════════════════════
+// PROMPT BUILDERS
+// ═══════════════════════════════════════════════════
+function buildPromptWithRealData(hotels) {
+  const preferred = state.preferredHotel
+    ? `Also include: "${state.preferredHotel}" if not already listed.` : '';
+
+  const hotelContext = hotels.map((h, i) => {
+    const revText = h.reviews.length
+      ? h.reviews.map(rv => `       [${rv.rating}★] "${rv.text}"`).join('\n')
+      : '       (No review snippets available)';
+    return `${i+1}. ${h.name}
+     Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews
+     Address: ${h.address}${h.website ? `\n     Website: ${h.website}` : ''}
+     Real Guest Reviews:
+${revText}`;
+  }).join('\n\n');
+
+  const mrtNote = state.maxMRTWalk !== 'any'
+    ? `PRIORITY: Only include properties within ${state.maxMRTWalk === 'walk' ? 'walking distance' : state.maxMRTWalk + ' walk'} of MRT/metro/public transport.`
+    : '';
+  const locationNote = [
+    state.district ? `District/Area: ${state.district}` : '',
+    state.nearLocation ? `Near: ${state.nearLocation}` : ''
+  ].filter(Boolean).join(' | ');
+
+  return `You are a hotel pricing and analysis expert. Below is VERIFIED real data from Google Maps for ${state.city}${state.district ? ', ' + state.district : ''}.
+
+REAL HOTELS FROM GOOGLE MAPS (${hotels.length} properties — preserve ratings & review counts exactly):
+${hotelContext}
+
+${preferred}
+
+YOUR TASK — analyse each hotel above and produce:
+
+SEARCH CONTEXT:
+- Location: ${state.city}${state.district ? ', ' + state.district : ''}${state.nearLocation ? ' (near ' + state.nearLocation + ')' : ''}
+- Dates: ${state.checkIn} to ${state.checkOut}
+- Budget: ${state.minPrice}–${state.maxPrice} MYR per night
+- Currency: ${state.currency}
+- Types wanted: ${state.accommodationTypes.join(', ')}
+- MRT preference: ${state.maxMRTWalk === 'any' ? 'No restriction' : state.maxMRTWalk === 'walk' ? 'Walking distance only' : 'Within ' + state.maxMRTWalk}
+${locationNote ? '- ' + locationNote : ''}
+${mrtNote}
+
+1. ROOM TYPES (exhaustive): Every room category (Superior Room, Deluxe Twin, Premier King, Executive Suite, Airbnb-style, Villa suite, etc. as applicable)
+   Estimated nightly price in ${state.currency} on: Official site, Booking.com, Agoda, Trip.com, Klook
+   ➜ BUDGET FILTER: Only include hotels where ≥1 room falls between ${state.minPrice}–${state.maxPrice} MYR/night
+   ➜ Exchange rate: provide 1 ${state.currency} = X MYR
+
+2. QUALITATIVE ANALYSIS (use real review snippets as evidence — rate 1–5 with 1-sentence summary):
+   staffFriendliness | overallCondition | cleanliness | transitProximity | acPerformance
+   noiseLevel | soundproofing | roomComfort | bathroomCondition | maintenanceQuality
+
+3. PROS (3–4): Specific positives extracted directly from the real reviews above.
+4. CONS (2–3): Specific negatives extracted directly from the real reviews above.
+5. PROFILE RECOMMENDATIONS: Tailored advice for Business, Family, Budget, Light Sleeper.
+6. PROXIMITY: Exact or estimated distance to nearest MRT/metro station (name it), airport, beach.
+7. PARKING: Whether car park is typically available.
+8. BOOKING LINKS: Realistic URLs for booking.com, agoda, trip.com, hotels.com, klook, tripadvisor.
+
+IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from the real data above.
+Prices are estimates to guide research — users will verify and book on the actual platforms.
+
+Return ONLY a valid JSON array (no markdown, no explanation):
+[{
+  "name": string,
+  "type": "Hotel"|"Resort"|"Villa",
+  "stars": number,
+  "guestRating": number,
+  "reviewCount": number,
+  "carParkAvailable": boolean,
+  "exchangeRateToMYR": number,
+  "roomTypes": [{"type":string,"sizeM2":string,"breakfastIncluded":boolean,"cancellationPolicy":string,"prices":{"official":number,"booking":number,"agoda":number,"trip":number,"klook":number}}],
+  "reviewMetrics": {"staffFriendliness":{"rating":number,"summary":string},"overallCondition":{"rating":number,"summary":string},"cleanliness":{"rating":number,"summary":string},"transitProximity":{"rating":number,"summary":string},"acPerformance":{"rating":number,"summary":string},"noiseLevel":{"rating":number,"summary":string},"soundproofing":{"rating":number,"summary":string},"roomComfort":{"rating":number,"summary":string},"bathroomCondition":{"rating":number,"summary":string},"maintenanceQuality":{"rating":number,"summary":string}},
+  "profileRecommendations": {"business":string,"family":string,"budget":string,"lightSleeper":string},
+  "proximity": {"mrt":string,"beach":string,"airport":string},
+  "pros": [string],
+  "cons": [string],
+  "links": {"booking":string,"agoda":string,"trip":string,"hotels":string,"klook":string,"tripadvisor":string}
+}]`;
+}
+
+function buildPromptAIOnly() {
+  const preferred = state.preferredHotel ? `Specifically include: "${state.preferredHotel}".` : '';
+  const locParts  = [state.city, state.district, state.nearLocation ? 'near ' + state.nearLocation : ''].filter(Boolean).join(', ');
+  const mrtNote   = state.maxMRTWalk !== 'any'
+    ? `PRIORITY: Only include properties within ${state.maxMRTWalk === 'walk' ? 'walking distance' : state.maxMRTWalk} of MRT/metro.` : '';
+  return `Act as a world-class travel data aggregator. Screen top-rated accommodations in ${locParts} for ${state.checkIn} to ${state.checkOut}.
+${preferred}
+Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5 | Budget: ${state.minPrice}–${state.maxPrice} MYR/night | Currency: ${state.currency}
+${mrtNote}
+
+CRITICAL: Top 10 properties by review volume. Budget-filter strictly. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
+
+For each property provide: exhaustive room types with platform prices (Official, Booking, Agoda, Trip, Klook) in ${state.currency}, 10-factor qualitative analysis (1–5 + 1-sentence summary each), 3–4 pros, 2–3 cons, profile recommendations (Business/Family/Budget/Light Sleeper), proximity with exact MRT station name and distance, parking, booking links, exchange rate.
+
+Return ONLY a valid JSON array matching this schema:
+[{"name":string,"type":"Hotel"|"Resort"|"Villa","stars":number,"guestRating":number,"reviewCount":number,"carParkAvailable":boolean,"exchangeRateToMYR":number,"roomTypes":[{"type":string,"sizeM2":string,"breakfastIncluded":boolean,"cancellationPolicy":string,"prices":{"official":number,"booking":number,"agoda":number,"trip":number,"klook":number}}],"reviewMetrics":{"staffFriendliness":{"rating":number,"summary":string},"overallCondition":{"rating":number,"summary":string},"cleanliness":{"rating":number,"summary":string},"transitProximity":{"rating":number,"summary":string},"acPerformance":{"rating":number,"summary":string},"noiseLevel":{"rating":number,"summary":string},"soundproofing":{"rating":number,"summary":string},"roomComfort":{"rating":number,"summary":string},"bathroomCondition":{"rating":number,"summary":string},"maintenanceQuality":{"rating":number,"summary":string}},"profileRecommendations":{"business":string,"family":string,"budget":string,"lightSleeper":string},"proximity":{"mrt":string,"beach":string,"airport":string},"pros":[string],"cons":[string],"links":{"booking":string,"agoda":string,"trip":string,"hotels":string,"klook":string,"tripadvisor":string}}]`;
+}
+
+// ═══════════════════════════════════════════════════
+// JSON EXTRACTOR
+// ═══════════════════════════════════════════════════
+function extractJSON(text) {
+  text = text.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+  const start = text.indexOf('[');
+  if (start !== -1) {
+    const end = text.lastIndexOf(']');
+    if (end > start) { try { return JSON.parse(text.slice(start, end+1)); } catch {} }
+  }
+  const oStart = text.indexOf('{');
+  if (oStart !== -1) {
+    try {
+      const obj = JSON.parse(text.slice(oStart));
+      const arr = Object.values(obj).find(v => Array.isArray(v));
+      if (arr) return arr;
+    } catch {}
+  }
+  throw new Error('No valid JSON array in response');
+}
+
+// ═══════════════════════════════════════════════════
+// PROVIDER CALLERS
+// ═══════════════════════════════════════════════════
+async function callProvider(provider, prompt, key, model) {
+  if (provider === 'gemini')   return callGemini(prompt, key, model);
+  if (provider === 'anthropic') return callAnthropic(prompt, key, model);
+  return callOpenAICompat(prompt, key, model, provider);
+}
+
+async function callGemini(prompt, key, model) {
+  const body = { model, contents:[{parts:[{text:prompt}]}], generationConfig:{responseMimeType:'application/json'} };
+  const url = PROXY_MODE
+    ? '/api/gemini'
+    : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || `Gemini ${r.status}`);
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function callAnthropic(prompt, key, model) {
+  const body = { model, max_tokens:8000,
+    system:'You are a hotel data expert. Return ONLY valid JSON array. No markdown.',
+    messages:[{role:'user',content:prompt}] };
+  const r = PROXY_MODE
+    ? await fetch('/api/anthropic', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
+    : await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'}, body:JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || `Anthropic ${r.status}`);
+  return data.content?.[0]?.text || '';
+}
+
+async function callOpenAICompat(prompt, key, model, variant) {
+  const body = { model, max_tokens:8000,
+    messages:[
+      {role:'system',content:'Return ONLY a valid JSON array. No markdown, no explanation.'},
+      {role:'user',content:prompt}
+    ]
+  };
+  if (variant === 'openai') body.response_format = {type:'json_object'};
+  const baseUrl = variant === 'deepseek' ? 'https://api.deepseek.com/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
+  const r = PROXY_MODE
+    ? await fetch('/api/openai', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
+    : await fetch(baseUrl, { method:'POST', headers:{'Authorization':`Bearer ${key}`,'content-type':'application/json'}, body:JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || `${variant} ${r.status}`);
+  return data.choices?.[0]?.message?.content || '';
+}
+
+// ═══════════════════════════════════════════════════
+// FALLBACK ORCHESTRATOR
+// ═══════════════════════════════════════════════════
+function fbEntry(p, status, detail='') {
+  let el = document.getElementById('fbe-'+p);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fbe-'+p;
+    el.className = 'flex items-center gap-2 text-[11px] font-black';
+    document.getElementById('fb-entries').appendChild(el);
+  }
+  const col = {trying:'text-amber-600',ok:'text-emerald-600',err:'text-rose-500',skip:'text-slate-400'}[status]||'';
+  el.innerHTML = `<span class="fb-dot ${status}"></span><span class="${col}">${P_LABELS[p]}</span>${detail?`<span class="text-slate-400 font-normal truncate" style="max-width:160px">${detail}</span>`:''}`;
+}
+
+async function callWithFallback(prompt) {
+  document.getElementById('fb-log').classList.remove('hidden');
+  document.getElementById('fb-entries').innerHTML = '';
+  const errors = {};
+
+  for (const p of PROVIDERS) {
+    const key   = PROXY_MODE ? '' : (localStorage.getItem('ls_key_'+p)||'');
+    const model = PROXY_MODE ? DEFAULT_MODELS[p] : (localStorage.getItem('ls_model_'+p)||DEFAULT_MODELS[p]);
+    if (!key && !PROXY_MODE) { fbEntry(p,'skip'); errors[p]='no key'; continue; }
+
+    fbEntry(p,'trying');
+    setSearchStatus(`Trying ${P_LABELS[p]}…`);
+    try {
+      const text = await callProvider(p, prompt, key, model);
+      const data = extractJSON(text);
+      if (!Array.isArray(data) || data.length === 0) throw new Error('Empty response');
+      fbEntry(p,'ok');
+      return { data, provider:p, model };
+    } catch(err) {
+      fbEntry(p,'err', err.message);
+      errors[p] = err.message.slice(0,80);
+      toast(`⚠ ${P_LABELS[p]} failed → trying next…`, 2500);
+    }
+  }
+
+  const detail = PROVIDERS.filter(p=>errors[p]&&errors[p]!=='no key').map(p=>`${P_LABELS[p]}: ${errors[p]}`).join(' | ');
+  throw new Error('All AI providers failed.' + (detail ? ` (${detail})` : ' Add API keys in Settings.'));
+}
+
+// ═══════════════════════════════════════════════════
+// SCORE & FILTER
+// ═══════════════════════════════════════════════════
+function calculateScore(hotel) {
+  let s = hotel.guestRating * 1.5;
+  if (state.preferredHotel && hotel.name.toLowerCase().includes(state.preferredHotel.toLowerCase())) s += 2.0;
+  if ((hotel.proximity?.mrt||'').toLowerCase().match(/walking|km/)) s += 1.0;
+  if (hotel.carParkAvailable) s += 0.5;
+  return Math.min(10, Math.round(s * 10) / 10);
+}
+
+function filterAndScore(data) {
+  // Build a lat/lng lookup from real Places data if available
+  const coordMap = {};
+  if (lastRealHotels) {
+    lastRealHotels.forEach(rh => {
+      if (rh.lat && rh.lng) coordMap[rh.name.toLowerCase()] = { lat: rh.lat, lng: rh.lng };
+    });
+  }
+  return data
+    .map(h => {
+      // Try to match coordinates by name
+      const key = h.name.toLowerCase();
+      const coords = coordMap[key] ||
+        Object.entries(coordMap).find(([k]) => key.includes(k) || k.includes(key))?.[1] ||
+        null;
+      return {
+        ...h,
+        features: h.features || [],
+        lat: coords?.lat || null,
+        lng: coords?.lng || null,
+        roomTypes: (h.roomTypes||[]).filter(room => {
+          const prices = Object.values(room.prices||{}).filter(p=>p>0);
+          if (!prices.length) return false;
+          const priceMYR = Math.min(...prices) * (h.exchangeRateToMYR||1);
+          return priceMYR >= state.minPrice && priceMYR <= state.maxPrice;
+        })
+      };
+    })
+    .filter(h => h.roomTypes.length > 0)
+    .map(h => ({ ...h, compositeScore: calculateScore(h) }))
+    .sort((a,b) => b.compositeScore - a.compositeScore);
+}
+
+// ═══════════════════════════════════════════════════
+// FORMAT HELPERS
+// ═══════════════════════════════════════════════════
+function fmtPrice(amount, code) {
+  const c = CURRENCIES.find(x=>x.code===(code||state.currency));
+  return (c?c.symbol:code) + new Intl.NumberFormat('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}).format(amount);
+}
+function sentimentGradient(r) {
+  if (r>=4.5) return 'from-emerald-500 to-emerald-700';
+  if (r>=3.8) return 'from-blue-600 to-blue-800';
+  if (r>=3.0) return 'from-amber-500 to-amber-600';
+  return 'from-rose-500 to-rose-700';
+}
+
+// ═══════════════════════════════════════════════════
+// SEARCH HANDLER
+// ═══════════════════════════════════════════════════
+function setLoading(on) {
+  document.getElementById('search-btn').disabled = on;
+  document.getElementById('search-icon').classList.toggle('hidden', on);
+  document.getElementById('search-spinner').classList.toggle('hidden', !on);
+  document.getElementById('loading-skeleton').classList.toggle('hidden', !on);
+  if (on) {
+    document.getElementById('results-container').innerHTML = '';
+    document.getElementById('results-controls').classList.add('hidden');
+    document.getElementById('error-box').classList.add('hidden');
+  }
+}
+function setSearchStatus(msg) { document.getElementById('search-btn-text').textContent = msg; }
+
+async function handleSearch(e) {
+  e.preventDefault();
+  state.city             = document.getElementById('city').value.trim();
+  state.district         = document.getElementById('district').value.trim();
+  state.nearLocation     = document.getElementById('near-location').value.trim();
+  state.preferredHotel   = document.getElementById('preferred-hotel').value.trim();
+  state.maxMRTWalk       = document.getElementById('mrt-distance').value;
+  state.accommodationTypes = [...document.querySelectorAll('.accom-pill.active')].map(el => el.dataset.type);
+  if (!state.accommodationTypes.length) state.accommodationTypes = ['Hotel','Resort'];
+  state.minRating        = parseFloat(document.getElementById('min-rating').value);
+  state.minPrice         = parseInt(document.getElementById('min-price').value);
+  state.maxPrice         = parseInt(document.getElementById('max-price').value);
+
+  setLoading(true);
+  lastRealHotels = null;
+  document.getElementById('step-log').classList.remove('hidden');
+  document.getElementById('fb-log').classList.add('hidden');
+  document.getElementById('fb-entries').innerHTML = '';
+  setStep(1,'active'); setStep(2,'pending','Prices, quality scores, pros/cons');
+
+  let prompt;
+
+  // ── Step 1: Google Places ──────────────────────
+  try {
+    setSearchStatus('Fetching real hotels from Google Maps…');
+    const hotels = await fetchRealHotels();
+    lastRealHotels = hotels;
+    setStep(1,'done', `${hotels.length} real hotels found`);
+    toast(`✓ Google Maps: ${hotels.length} hotels found`, 2500);
+    prompt = buildPromptWithRealData(hotels);
+  } catch(err) {
+    setStep(1,'skip', 'AI-only mode: ' + err.message.slice(0,40));
+    prompt = buildPromptAIOnly();
+  }
+
+  // ── Step 2: AI Analysis ────────────────────────
+  try {
+    setStep(2,'active','Running AI analysis…');
+    const { data, provider, model } = await callWithFallback(prompt);
+    results = filterAndScore(data);
+    if (results.length === 0) throw new Error('No hotels matched your budget. Try widening the MYR range.');
+    setStep(2,'done',`${results.length} hotels via ${P_LABELS[provider]}`);
+    toast(`✓ ${results.length} properties analysed via ${P_LABELS[provider]}`, 3000);
+
+    // Update header badge
+    const badge = document.getElementById('data-source-badge');
+    const btext = document.getElementById('data-source-text');
+    badge.classList.remove('hidden');
+    badge.classList.add('flex');
+    if (lastRealHotels) {
+      btext.innerHTML = `<span class="badge-real" style="background:transparent;border:none;padding:0">✓ Real Google Ratings</span> + AI Prices`;
+    } else {
+      btext.innerHTML = `<span class="badge-est" style="background:transparent;border:none;padding:0">AI-Only Mode</span>`;
+    }
+
+    renderResults();
+    document.getElementById('results-controls').classList.remove('hidden');
+    updateExchangeRateBadge(results);
+    renderMap(results);
+  } catch(err) {
+    setStep(2,'err', err.message.slice(0,40));
+    document.getElementById('error-box').textContent = err.message;
+    document.getElementById('error-box').classList.remove('hidden');
+  } finally {
+    setLoading(false);
+    setSearchStatus('Perform AI Scan');
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// VIEW MODE
+// ═══════════════════════════════════════════════════
+function setViewMode(mode) {
+  viewMode = mode;
+  const active = 'px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl scale-105';
+  const idle   = 'px-8 py-3.5 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100';
+  document.getElementById('btn-comparison').className = mode==='comparison' ? active : idle;
+  document.getElementById('btn-qualitative').className = mode==='qualitative' ? active : idle;
+  renderResults();
+}
+
+// ═══════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════
+function renderResults() {
+  const el = document.getElementById('results-container');
+  el.innerHTML = viewMode === 'qualitative' ? renderQualitativeView(results) : results.map(renderHotelCard).join('');
+  el.classList.add('fade-in');
+}
+
+function renderHotelCard(hotel, idx) {
+  const nights = getNights();
+  const stars  = Array.from({length:hotel.stars||0},()=>`<svg class="w-5 h-5 fill-current text-amber-400" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></svg>`).join('');
+
+  const ratingBadge = lastRealHotels
+    ? `<span class="badge-real">✓ Google Rating</span>`
+    : `<span class="badge-est">AI Estimate</span>`;
+
+  return `
+  <div class="bg-white rounded-[50px] shadow-lg border border-slate-100 overflow-hidden hover:shadow-2xl transition-all hover:border-blue-200/50 fade-in">
+    <div class="p-10">
+      <div class="flex justify-between items-start mb-10">
+        <div class="flex-1">
+          <div class="flex items-center gap-4 mb-3 flex-wrap">
+            <h3 class="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">${idx+1}. ${hotel.name}</h3>
+            <div class="flex">${stars}</div>
+          </div>
+          <div class="flex items-center gap-4 flex-wrap text-[12px] font-black">
+            <div class="text-blue-800 bg-blue-50 px-4 py-1.5 rounded-xl uppercase tracking-widest shadow-sm">LuxeScore: ${hotel.compositeScore}/10</div>
+            <div class="flex items-center gap-2 text-slate-600">
+              <span class="text-xl font-black">${hotel.guestRating}</span>
+              <span class="text-slate-400">/ 5 • ${(hotel.reviewCount||0).toLocaleString()} reviews</span>
+              ${ratingBadge}
+            </div>
+            <div class="text-slate-400 uppercase tracking-widest">${hotel.type}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-10 mb-10">
+        <!-- Proximity & Parking -->
+        <div class="grid grid-cols-3 gap-4">
+          <div class="bg-slate-50 p-5 rounded-[32px] border border-slate-100 shadow-inner">
+            <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Transport</p>
+            <p class="text-[12px] font-black text-slate-800 leading-tight">${hotel.proximity?.mrt||'—'}</p>
+          </div>
+          <div class="bg-slate-50 p-5 rounded-[32px] border border-slate-100 shadow-inner">
+            <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Airport</p>
+            <p class="text-[12px] font-black text-slate-800 leading-tight">${hotel.proximity?.airport||'—'}</p>
+          </div>
+          <div class="bg-slate-50 p-5 rounded-[32px] border border-slate-100 shadow-inner">
+            <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Parking</p>
+            ${hotel.carParkAvailable
+              ? `<div class="flex items-center gap-1"><svg class="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg><span class="text-[12px] font-black text-slate-800">Yes</span></div>`
+              : `<div class="flex items-center gap-1 opacity-40"><svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg><span class="text-[12px] font-black text-slate-400">N/A</span></div>`}
+          </div>
+        </div>
+
+        <!-- Pros / Cons -->
+        <div class="flex gap-4">
+          <div class="flex-1 bg-emerald-50/40 p-6 rounded-[40px] border border-emerald-100/50">
+            <p class="text-[12px] font-black text-emerald-700 uppercase tracking-[0.15em] mb-4">Key Pros</p>
+            <ul class="text-[12px] font-bold text-emerald-900 space-y-2 leading-snug">
+              ${(hotel.pros||[]).slice(0,3).map(p=>`<li class="flex gap-2"><span>•</span><span>${p}</span></li>`).join('')}
+            </ul>
+          </div>
+          <div class="flex-1 bg-rose-50/40 p-6 rounded-[40px] border border-rose-100/50">
+            <p class="text-[12px] font-black text-rose-700 uppercase tracking-[0.15em] mb-4">Concerns</p>
+            <ul class="text-[12px] font-bold text-rose-900 space-y-2 leading-snug">
+              ${(hotel.cons||[]).slice(0,3).map(c=>`<li class="flex gap-2"><span>•</span><span>${c}</span></li>`).join('')}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      ${renderComparisonTable(hotel, nights)}
+
+      <!-- Booking Links -->
+      ${renderBookingLinks(hotel)}
+    </div>
+  </div>`;
+}
+
+function renderBookingLinks(hotel) {
+  const links = hotel.links || {};
+  const platforms = [
+    {key:'booking', label:'Booking.com', color:'bg-blue-600'},
+    {key:'agoda',   label:'Agoda',       color:'bg-rose-600'},
+    {key:'trip',    label:'Trip.com',    color:'bg-blue-500'},
+    {key:'klook',   label:'Klook',       color:'bg-green-600'},
+    {key:'hotels',  label:'Hotels.com',  color:'bg-orange-600'},
+    {key:'tripadvisor', label:'TripAdvisor', color:'bg-emerald-700'},
+  ];
+  const btns = platforms.filter(p => links[p.key]).map(p =>
+    `<a href="${links[p.key]}" target="_blank" rel="noopener"
+      class="${p.color} text-white text-[10px] font-black px-4 py-2 rounded-xl hover:opacity-90 transition-all">
+      ${p.label}
+    </a>`
+  ).join('');
+  if (!btns) return '';
+  return `<div class="mt-6 flex items-center gap-3 flex-wrap">
+    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Book on:</span>
+    ${btns}
+    <span class="text-[10px] text-slate-400 italic">Prices are estimates — verify on platform</span>
+  </div>`;
+}
+
+function renderComparisonTable(hotel, nights) {
+  const cur  = state.currency;
+  const rows = (hotel.roomTypes||[]).map(room => {
+    const prices = Object.values(room.prices||{}).filter(p=>p>0);
+    const best   = prices.length ? Math.min(...prices) : 0;
+    const totalC = best * nights;
+    const totalM = totalC * (hotel.exchangeRateToMYR||1);
+    const cell = v => {
+      if (!v || v <= 0) return `<span class="text-slate-300">—</span>`;
+      const isBest = v === best;
+      return `<div class="flex flex-col items-center">
+        <span class="font-black text-[13px] ${isBest?'text-green-600':'text-slate-700'}">${new Intl.NumberFormat('en-US').format(v)}</span>
+        ${isBest?`<span class="text-[7px] font-black text-green-500 uppercase">Best</span>`:''}
+      </div>`;
+    };
+    return `<tr class="hover:bg-blue-50/40 transition-all">
+      <td class="px-4 py-5">
+        <div class="font-black text-slate-900 text-[12px] leading-tight">${room.type}</div>
+        <span class="text-[8px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-black">${room.sizeM2}</span>
+      </td>
+      <td class="px-1 py-5 border-l border-slate-100 text-center">
+        ${room.breakfastIncluded
+          ? `<div class="flex flex-col items-center"><svg class="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg><span class="text-[7px] font-black text-emerald-600">Incl.</span></div>`
+          : `<div class="flex flex-col items-center opacity-30"><svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg><span class="text-[7px] font-black text-slate-400">No</span></div>`}
+      </td>
+      <td class="px-1 py-5 border-l border-slate-100 text-center">${cell(room.prices?.official)}</td>
+      <td class="px-1 py-5 border-l border-slate-100 text-center">${cell(room.prices?.trip)}</td>
+      <td class="px-1 py-5 border-l border-slate-100 text-center">${cell(room.prices?.agoda)}</td>
+      <td class="px-1 py-5 border-l border-slate-100 text-center">${cell(room.prices?.booking)}</td>
+      <td class="px-1 py-5 border-l border-slate-100 text-center">${cell(room.prices?.klook)}</td>
+      <td class="px-4 py-5 text-center border-l border-green-100 bg-green-50/20">
+        <div class="font-black text-slate-900 text-[14px]">${fmtPrice(totalC,cur)}</div>
+        <div class="text-[9px] text-slate-400">${nights}n</div>
+      </td>
+      <td class="px-4 py-5 text-center border-l border-orange-100 bg-orange-50/20">
+        <div class="font-black text-orange-700 text-[14px]">${fmtPrice(totalM,'MYR')}</div>
+        <div class="text-[9px] text-slate-400">${nights}n</div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="border border-slate-200 rounded-3xl overflow-hidden">
+    <div class="bg-amber-50/60 border-b border-amber-100 px-4 py-2 flex items-center gap-2">
+      <span class="badge-est">Est. Prices</span>
+      <span class="text-[10px] text-slate-500">Platform prices are AI estimates — click booking links above to verify</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-[11px] border-collapse bg-white" style="min-width:860px">
+        <thead class="bg-slate-50/80">
+          <tr class="border-b border-slate-200">
+            <th class="px-4 py-4 text-left font-black text-slate-400 uppercase tracking-widest w-[18%]">Room Category</th>
+            <th class="px-1 py-4 text-center font-black text-slate-400 uppercase tracking-widest border-l border-slate-100 w-[8%]">Breakfast</th>
+            <th class="px-1 py-4 text-center font-black text-blue-800 uppercase tracking-widest border-l border-slate-100 w-[8%]">Official</th>
+            <th class="px-1 py-4 text-center font-black text-blue-800 uppercase tracking-widest border-l border-slate-100 w-[8%]">Trip</th>
+            <th class="px-1 py-4 text-center font-black text-blue-800 uppercase tracking-widest border-l border-slate-100 w-[8%]">Agoda</th>
+            <th class="px-1 py-4 text-center font-black text-blue-800 uppercase tracking-widest border-l border-slate-100 w-[8%]">Booking</th>
+            <th class="px-1 py-4 text-center font-black text-blue-800 uppercase tracking-widest border-l border-slate-100 w-[8%]">Klook</th>
+            <th class="px-4 py-4 text-center font-black text-green-700 uppercase tracking-widest bg-green-50/50 border-l border-green-100 w-[13%]">Total (${cur})</th>
+            <th class="px-4 py-4 text-center font-black text-orange-700 uppercase tracking-widest bg-orange-50/50 border-l border-orange-100 w-[13%]">Total (MYR)</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderQualitativeView(hotels) {
+  const metrics = [
+    {key:'staffFriendliness', label:'Staff Friendliness'},
+    {key:'overallCondition',  label:'Condition & Modernity'},
+    {key:'cleanliness',       label:'Sanitation Quality'},
+    {key:'transitProximity',  label:'MRT Access'},
+    {key:'acPerformance',     label:'Air Con Efficiency'},
+    {key:'noiseLevel',        label:'Ambient Quietness'},
+    {key:'soundproofing',     label:'Soundproofing'},
+    {key:'roomComfort',       label:'Sleep Comfort'},
+    {key:'bathroomCondition', label:'Bathroom Quality'},
+    {key:'maintenanceQuality',label:'Maintenance Level'}
+  ];
+  const cols = hotels.slice(0,10).map(h => `
+    <th class="px-8 py-12 text-center font-black text-white uppercase tracking-tight border-l border-slate-800/50 min-w-[250px] text-[12px]">
+      <div class="line-clamp-2 leading-tight">${h.name}</div>
+      <div class="flex items-center justify-center gap-1 mt-2">
+        <span class="text-amber-400 text-sm font-black">${h.guestRating}</span>
+        <span class="text-slate-500 text-[9px]">/ 5</span>
+        ${lastRealHotels?'<span class="badge-real ml-1" style="font-size:8px">Real</span>':''}
+      </div>
+    </th>`).join('');
+
+  const mrows = metrics.map(m => {
+    const cells = hotels.slice(0,10).map(h => {
+      const md = (h.reviewMetrics||{})[m.key] || {rating:0,summary:'N/A'};
+      const fill = (md.rating/5)*100;
+      const dots = [1,2,3,4,5].map(b=>`<div class="w-3 h-3 rounded-full ${b<=Math.round(md.rating)?'bg-blue-600':'bg-slate-200'}"></div>`).join('');
+      return `<td class="px-8 py-10 border-l border-slate-100 bg-white">
+        <div class="space-y-5">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-1.5">${dots}</div>
+            <span class="text-3xl font-black text-slate-900">${md.rating.toFixed(1)}</span>
+          </div>
+          <div class="w-full h-5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50 shadow-inner">
+            <div class="h-full bg-gradient-to-r ${sentimentGradient(md.rating)} rounded-full" style="width:${fill}%"></div>
+          </div>
+          <p class="text-[13px] font-bold text-slate-600 leading-relaxed bg-slate-50 p-5 rounded-[28px] border border-slate-100 min-h-[100px] italic">"${md.summary}"</p>
+        </div>
+      </td>`;
+    }).join('');
+    return `<tr class="hover:bg-blue-50/10 transition-all">
+      <td class="px-10 py-10 font-black text-slate-800 bg-slate-50 sticky left-0 z-10 border-r border-slate-200 text-lg shadow-[4px_0_12px_rgba(0,0,0,0.04)]">${m.label}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  return `<div class="space-y-8 fade-in">
+    <div class="flex items-center gap-4 bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm border-l-8 border-l-blue-600">
+      <svg class="w-8 h-8 text-blue-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/>
+      </svg>
+      <div>
+        <p class="text-base font-black text-slate-700 uppercase tracking-[0.1em]">Qualitative Sentiment Matrix — ${hotels.length} Properties</p>
+        ${lastRealHotels?'<p class="text-xs text-slate-400 mt-1">Analysis anchored to real Google Maps reviews</p>':''}
+      </div>
+    </div>
+    <div class="bg-white rounded-[40px] shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse" style="min-width:1100px">
+          <thead class="bg-slate-900 border-b-2 border-slate-800">
+            <tr>
+              <th class="px-10 py-12 text-left font-black text-white uppercase tracking-[0.2em] sticky left-0 z-20 bg-slate-900 w-[260px] text-xl">Analysis Matrix</th>
+              ${cols}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">${mrows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// PDF EXPORT
+// ═══════════════════════════════════════════════════
+function exportPDF() {
+  if (!results.length) return;
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF('p','mm','a4');
+  const nights = getNights();
+  const blue=[30,64,175], red=[220,38,38], amber=[217,119,6], emerald=[5,150,105], slate=[71,85,105];
+  const sc = r => r>=4.3?emerald:r>=3.8?blue:r>=3.0?amber:red;
+
+  // Cover
+  doc.setFillColor(...blue); doc.rect(0,0,210,55,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold');
+  doc.setFontSize(24); doc.text('LuxeStay Intelligence Report',15,26);
+  doc.setFontSize(11); doc.text(`${state.city} | ${state.checkIn} → ${state.checkOut} | ${results.length} Properties`,15,38);
+  doc.setFontSize(9);
+  const modeNote = lastRealHotels ? 'Ratings: Real (Google Maps) | Prices: AI-estimated' : 'All data: AI-generated estimates';
+  doc.text(modeNote, 15, 47);
+
+  // Sentiment page
+  const summaryMetrics=[
+    {key:'staffFriendliness',label:'Staff Friendliness'},{key:'cleanliness',label:'Sanitation'},
+    {key:'roomComfort',label:'Sleep Comfort'},{key:'noiseLevel',label:'Quietness'},{key:'overallCondition',label:'Condition'}
+  ];
+  let yPos=70;
+  results.forEach((hotel,idx)=>{
+    if(yPos>240){doc.addPage();yPos=20;}
+    doc.setTextColor(30,41,59); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+    doc.text(`${idx+1}. ${hotel.name}`,15,yPos);
+    doc.setFontSize(8); doc.setTextColor(100,116,139);
+    doc.text(`LuxeScore: ${hotel.compositeScore}/10 | Rating: ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)${lastRealHotels?' [Google]':''}`,15,yPos+5);
+    yPos+=11;
+    summaryMetrics.forEach(sm=>{
+      const md=(hotel.reviewMetrics||{})[sm.key]||{rating:0};
+      doc.setTextColor(...slate); doc.setFont('helvetica','bold'); doc.setFontSize(7);
+      doc.text(sm.label,15,yPos+3);
+      doc.setFillColor(241,245,249); doc.rect(50,yPos,100,4,'F');
+      const c=sc(md.rating); doc.setFillColor(...c); doc.rect(50,yPos,(md.rating/5)*100,4,'F');
+      doc.setTextColor(30,41,59); doc.setFontSize(8); doc.text(md.rating.toFixed(1),155,yPos+3.5);
+      yPos+=7;
+    });
+    yPos+=12;
+  });
+
+  // Rate page
+  doc.addPage();
+  doc.setFillColor(...blue); doc.rect(0,0,210,40,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold');
+  doc.setFontSize(20); doc.text('Market Rate Architecture',15,25);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text(`Estimated lead pricing — verify on booking platforms | Budget: RM${state.minPrice}–RM${state.maxPrice}/night`,15,33);
+
+  const leadRows=results.map((h,i)=>{
+    const all=(h.roomTypes||[]).flatMap(r=>Object.values(r.prices||{}).filter(p=>p>0));
+    const lead=all.length?Math.min(...all):0;
+    const myr=lead*nights*(h.exchangeRateToMYR||1);
+    return [`${i+1}. ${h.name}`,`${state.currency} ${lead.toLocaleString()}`,`RM ${Math.round(myr).toLocaleString()}`,`${h.compositeScore}/10`,`${h.guestRating}${lastRealHotels?'★ Real':''}`];
+  });
+  doc.autoTable({startY:50,head:[['Property',`Lead Nightly (${state.currency})`,`Total MYR (${nights}n)`,'LuxeScore','Rating']],
+    body:leadRows,styles:{fontSize:8,cellPadding:3.5},headStyles:{fillColor:[30,41,59],fontStyle:'bold'},
+    columnStyles:{0:{fontStyle:'bold',cellWidth:65}},margin:{left:15,right:15}});
+
+  // Per-hotel deep-dive
+  results.forEach((hotel,idx)=>{
+    doc.addPage();
+    doc.setFillColor(248,250,252); doc.rect(0,0,210,45,'F');
+    doc.setTextColor(...blue); doc.setFont('helvetica','bold'); doc.setFontSize(18);
+    doc.text(`${idx+1}. ${hotel.name}`,15,22);
+    doc.setFontSize(9); doc.setTextColor(100,116,139);
+    doc.text(`Rating: ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)${lastRealHotels?' — Verified via Google Maps':''}`,15,32);
+    doc.text(`Transport: ${hotel.proximity?.mrt||'—'} | Airport: ${hotel.proximity?.airport||'—'}`,15,39);
+
+    let cy=55;
+    doc.setTextColor(...emerald); doc.setFontSize(12); doc.text('Key Positives',15,cy);
+    doc.setTextColor(...red); doc.text('Concerns',110,cy); cy+=8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(30,41,59);
+    let py=cy,cny=cy;
+    (hotel.pros||[]).forEach(p=>{const ln=doc.splitTextToSize('• '+p,88);doc.text(ln,15,py);py+=ln.length*5;});
+    (hotel.cons||[]).forEach(c=>{const ln=doc.splitTextToSize('• '+c,88);doc.text(ln,110,cny);cny+=ln.length*5;});
+    cy=Math.max(py,cny)+15;
+
+    doc.setFont('helvetica','bold'); doc.setTextColor(...blue); doc.setFontSize(12);
+    doc.text('Room Inventory (Estimated Prices)',15,cy);
+    const roomRows=(hotel.roomTypes||[]).map(room=>{
+      const prices=Object.values(room.prices||{}).filter(p=>p>0);
+      const best=prices.length?Math.min(...prices):0;
+      return[room.type,room.sizeM2,room.breakfastIncluded?'Yes':'No',
+        `~${state.currency} ${best.toLocaleString()}`,`~RM ${Math.round(best*nights*(hotel.exchangeRateToMYR||1)).toLocaleString()}`];
+    });
+    doc.autoTable({startY:cy+5,head:[['Category','Size','Bkfst',`Best est. (${state.currency})`,`Est. Total (MYR)`]],
+      body:roomRows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[51,65,85],fontStyle:'bold'},
+      columnStyles:{0:{fontStyle:'bold',cellWidth:55}},margin:{left:15,right:15}});
+
+    cy=doc.lastAutoTable.finalY+12;
+    doc.setFont('helvetica','bold'); doc.setTextColor(...blue); doc.setFontSize(12);
+    doc.text('Qualitative Breakdown',15,cy);
+    const qRows=Object.entries(hotel.reviewMetrics||{}).map(([k,m])=>[
+      k.replace(/([A-Z])/g,' $1').trim(),`${m.rating.toFixed(1)}/5`,m.summary
+    ]);
+    doc.autoTable({startY:cy+5,head:[['Factor','Score','Guest Sentiment Summary']],body:qRows,
+      styles:{fontSize:8,cellPadding:3},
+      columnStyles:{0:{cellWidth:38,fontStyle:'bold'},1:{cellWidth:20,halign:'center'},2:{cellWidth:122}},
+      margin:{left:15,right:15}});
+  });
+
+  doc.save(`LuxeStay_${state.city}_Report.pdf`);
+  toast('PDF exported!');
+}
+
+// ═══════════════════════════════════════════════════
+// EXCEL EXPORT
+// ═══════════════════════════════════════════════════
+function exportExcel() {
+  if (!results.length) return;
+  const nights = getNights();
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Room Inventory
+  const rows1 = [['Hotel','Rating','Reviews',lastRealHotels?'(Real)':'(Est)','Room Type','Size','Breakfast',
+    `Best Nightly ~${state.currency}`,`Est. Total ~${state.currency}`,`Est. Total ~MYR`,'MRT Access','LuxeScore']];
+  results.forEach(h => {
+    (h.roomTypes||[]).forEach(r => {
+      const prices = Object.values(r.prices||{}).filter(p=>p>0);
+      const best   = prices.length?Math.min(...prices):0;
+      rows1.push([h.name, h.guestRating, h.reviewCount, lastRealHotels?'Real':'Est',
+        r.type, r.sizeM2, r.breakfastIncluded?'Yes':'No',
+        best, best*nights, best*nights*(h.exchangeRateToMYR||1),
+        h.proximity?.mrt||'', h.compositeScore]);
+    });
+  });
+  const ws1 = XLSX.utils.aoa_to_sheet(rows1);
+  ws1['!cols'] = [{wch:30},{wch:8},{wch:10},{wch:6},{wch:28},{wch:8},{wch:10},{wch:14},{wch:14},{wch:14},{wch:22},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Room Inventory');
+
+  // Sheet 2: Qualitative
+  const qKeys = ['staffFriendliness','overallCondition','cleanliness','transitProximity','acPerformance','noiseLevel','soundproofing','roomComfort','bathroomCondition','maintenanceQuality'];
+  const rows2 = [['Hotel','Rating','LuxeScore',...qKeys.map(k=>k.replace(/([A-Z])/g,' $1').trim())]];
+  results.forEach(h => rows2.push([h.name, h.guestRating, h.compositeScore, ...qKeys.map(k=>(h.reviewMetrics||{})[k]?.rating||0)]));
+  const ws2 = XLSX.utils.aoa_to_sheet(rows2);
+  XLSX.utils.book_append_sheet(wb, ws2, 'Qualitative Scores');
+
+  // Sheet 3: Profile Recommendations
+  const rows3 = [['Hotel','Business','Family','Budget Traveller','Light Sleeper']];
+  results.forEach(h => {
+    const pr = h.profileRecommendations||{};
+    rows3.push([h.name, pr.business||'', pr.family||'', pr.budget||'', pr.lightSleeper||'']);
+  });
+  const ws3 = XLSX.utils.aoa_to_sheet(rows3);
+  ws3['!cols'] = [{wch:30},{wch:40},{wch:40},{wch:40},{wch:40}];
+  XLSX.utils.book_append_sheet(wb, ws3, 'Profile Recommendations');
+
+  XLSX.writeFile(wb, `LuxeStay_${state.city}.xlsx`);
+  toast('Excel exported! (3 sheets)');
+}
+
+// ═══════════════════════════════════════════════════
+// EXCHANGE RATE BADGE
+// ═══════════════════════════════════════════════════
+function updateExchangeRateBadge(hotels) {
+  const badge = document.getElementById('exchange-rate-badge');
+  if (!hotels.length) { badge.classList.add('hidden'); return; }
+  // Use the first hotel's exchangeRateToMYR (AI-provided)
+  const rate = hotels[0].exchangeRateToMYR;
+  if (!rate || rate <= 0) { badge.classList.add('hidden'); return; }
+  const cur = state.currency;
+  if (cur === 'MYR') { badge.classList.add('hidden'); return; }
+  // Format nicely: avoid too many decimals
+  const formatted = rate < 0.01 ? rate.toFixed(6) : rate < 1 ? rate.toFixed(4) : rate.toFixed(2);
+  badge.textContent = `1 ${cur} = RM ${formatted}`;
+  badge.classList.remove('hidden');
+}
+
+// ═══════════════════════════════════════════════════
+// MAP
+// ═══════════════════════════════════════════════════
+let _map = null;
+let _mapMarkers = [];
+let _radiusCircle = null;
+let _mapVisible = true;
+
+function toggleMap() {
+  _mapVisible = !_mapVisible;
+  document.getElementById('map-inner').style.display = _mapVisible ? '' : 'none';
+  document.getElementById('map-toggle-btn').textContent = _mapVisible ? 'Hide Map ▲' : 'Show Map ▼';
+  if (_mapVisible && _map) setTimeout(() => _map.invalidateSize(), 50);
+}
+
+function initMap(centerLat, centerLng, zoom) {
+  if (_map) { _map.remove(); _map = null; }
+  _map = L.map('hotel-map', { zoomControl: true, scrollWheelZoom: true })
+    .setView([centerLat, centerLng], zoom || 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(_map);
+}
+
+function makeMarkerIcon(label) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      background:#1d4ed8;color:#fff;font-size:10px;font-weight:900;
+      padding:5px 8px;border-radius:12px;white-space:nowrap;
+      box-shadow:0 3px 10px rgba(0,0,0,0.25);border:2px solid #fff;
+      max-width:160px;overflow:hidden;text-overflow:ellipsis;
+    ">${label}</div>`,
+    iconAnchor: [0, 0]
+  });
+}
+
+async function renderMap(hotels) {
+  const hotelsWithCoords = hotels.filter(h => h.lat && h.lng);
+
+  // No coordinates at all — show fallback Google Maps search link
+  if (!hotelsWithCoords.length) {
+    document.getElementById('map-section').classList.remove('hidden');
+    document.getElementById('hotel-map').innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full gap-4 bg-slate-50">
+        <svg class="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z"/>
+        </svg>
+        <p class="text-sm font-bold text-slate-500">Map coordinates not available (AI-only mode)</p>
+        <a href="https://www.google.com/maps/search/${encodeURIComponent(hotels.map(h=>h.name).join(' OR ') + ' ' + state.city)}"
+           target="_blank" rel="noopener"
+           class="bg-blue-700 text-white text-xs font-black px-5 py-2.5 rounded-2xl hover:bg-blue-800 transition-all">
+          View on Google Maps ↗
+        </a>
+      </div>`;
+    document.getElementById('map-count').textContent = `(coordinates unavailable — enable Google Places API)`;
+    return;
+  }
+
+  // Calculate center from average of all hotel coordinates
+  const avgLat = hotelsWithCoords.reduce((s,h)=>s+h.lat,0) / hotelsWithCoords.length;
+  const avgLng = hotelsWithCoords.reduce((s,h)=>s+h.lng,0) / hotelsWithCoords.length;
+
+  // Init or reset map
+  initMap(avgLat, avgLng, 13);
+
+  // Clear old markers
+  _mapMarkers.forEach(m => m.remove());
+  _mapMarkers = [];
+  if (_radiusCircle) { _radiusCircle.remove(); _radiusCircle = null; }
+
+  // Draw radius circle around first hotel if Near Location set
+  if (state.nearLocation && hotelsWithCoords.length) {
+    _radiusCircle = L.circle([avgLat, avgLng], {
+      radius: state.radiusKm * 1000,
+      color: '#3b82f6', fillColor: '#3b82f6',
+      fillOpacity: 0.08, weight: 2, dashArray: '6 4'
+    }).addTo(_map);
+    document.getElementById('radius-legend').classList.remove('hidden');
+  } else {
+    document.getElementById('radius-legend').classList.add('hidden');
+  }
+
+  // Add markers for each hotel with coordinates
+  const bounds = [];
+  hotelsWithCoords.forEach((hotel, idx) => {
+    const shortName = hotel.name.length > 22 ? hotel.name.slice(0,20)+'…' : hotel.name;
+    const marker = L.marker([hotel.lat, hotel.lng], {
+      icon: makeMarkerIcon(`${idx+1}. ${shortName}`)
+    }).addTo(_map);
+
+    const cur = state.currency;
+    const bestPrice = (() => {
+      const prices = (hotel.roomTypes||[]).flatMap(r => Object.values(r.prices||{}).filter(p=>p>0));
+      if (!prices.length) return null;
+      return Math.min(...prices);
+    })();
+    const priceStr = bestPrice ? `~${fmtPrice(bestPrice, cur)}/night` : 'Price N/A';
+
+    marker.bindPopup(`
+      <div style="font-family:'Inter',sans-serif;min-width:200px;padding:4px">
+        <div style="font-weight:900;font-size:13px;color:#1e293b;margin-bottom:6px">${hotel.name}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">
+            LuxeScore ${hotel.compositeScore}/10
+          </span>
+          <span style="background:#fefce8;color:#92400e;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">
+            ★ ${hotel.guestRating} (${(hotel.reviewCount||0).toLocaleString()})
+          </span>
+        </div>
+        <div style="font-size:11px;color:#475569;margin-bottom:4px">🚇 ${hotel.proximity?.mrt||'—'}</div>
+        <div style="font-size:12px;font-weight:900;color:#059669">${priceStr} <span style="color:#94a3b8;font-weight:400;font-size:10px">est.</span></div>
+        ${hotel.address ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${hotel.address}</div>` : ''}
+        <a href="https://www.google.com/maps/search/${encodeURIComponent(hotel.name + ' ' + state.city)}"
+           target="_blank" style="display:inline-block;margin-top:8px;font-size:10px;font-weight:900;color:#1d4ed8">
+          Open in Google Maps ↗
+        </a>
+      </div>`, { maxWidth: 280 });
+
+    _mapMarkers.push(marker);
+    bounds.push([hotel.lat, hotel.lng]);
+  });
+
+  // Fit map to show all markers
+  if (bounds.length > 1) {
+    _map.fitBounds(bounds, { padding: [40, 40] });
+  }
+
+  document.getElementById('map-section').classList.remove('hidden');
+  document.getElementById('map-count').textContent =
+    `${hotelsWithCoords.length} of ${hotels.length} hotels mapped`;
+  setTimeout(() => _map.invalidateSize(), 100);
+}
+
+// ═══════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════
+function buildAccomPills() {
+  const types = [
+    { type:'Hotel',     label:'Hotel' },
+    { type:'Resort',    label:'Resort' },
+    { type:'Villa',     label:'Villa' },
+    { type:'Airbnb',    label:'Airbnb' },
+    { type:'Serviced',  label:'Serviced Apt' },
+    { type:'Others',    label:'Others' },
+  ];
+  const container = document.getElementById('accom-pills');
+  container.innerHTML = types.map(t => {
+    const isActive = state.accommodationTypes.includes(t.type);
+    return `<button type="button" data-type="${t.type}"
+      class="accom-pill px-4 py-2 rounded-2xl text-[11px] font-black border transition-all ${isActive
+        ? 'bg-blue-700 text-white border-blue-700 shadow-md'
+        : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-blue-300 hover:text-blue-600'}"
+      onclick="toggleAccomPill(this)">
+      ${t.label}
+    </button>`;
+  }).join('');
+}
+
+function toggleAccomPill(el) {
+  const isActive = el.classList.contains('active');
+  if (isActive) {
+    el.classList.remove('active','bg-blue-700','text-white','border-blue-700','shadow-md');
+    el.classList.add('bg-slate-50','text-slate-400','border-slate-200');
+  } else {
+    el.classList.add('active','bg-blue-700','text-white','border-blue-700','shadow-md');
+    el.classList.remove('bg-slate-50','text-slate-400','border-slate-200');
+  }
+}
+
+function init() {
+  buildDatePicker('checkin-picker',  'Check-In Date',  state.checkIn,  'checkIn');
+  buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
+  document.getElementById('currency-select').value = state.currency;
+  buildAccomPills();
+  // Mark initially-active pills
+  document.querySelectorAll('.accom-pill').forEach(el => {
+    if (state.accommodationTypes.includes(el.dataset.type)) el.classList.add('active');
+  });
+  // Wire district to also trigger currency detection
+  document.getElementById('district').addEventListener('input', e => {
+    autoDetectCurrency(document.getElementById('city').value + ' ' + e.target.value);
+  });
+  buildSettingsPanel();
+}
+
+init();
+</script>
+</body>
+</html>
