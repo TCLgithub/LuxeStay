@@ -23,6 +23,8 @@
   ::-webkit-scrollbar { width:6px; height:6px; }
   ::-webkit-scrollbar-track { background:#f1f5f9; }
   ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px; }
+  .scrollbar-none { -ms-overflow-style:none; scrollbar-width:none; }
+  .scrollbar-none::-webkit-scrollbar { display:none; }
   .toast { position:fixed; bottom:24px; right:24px; z-index:9999; background:#1e293b; color:#fff; padding:12px 20px; border-radius:16px; font-size:13px; font-weight:700; box-shadow:0 8px 32px rgba(0,0,0,0.2); transform:translateY(80px); transition:transform .3s ease; }
   .toast.show { transform:translateY(0); }
   .fb-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; background:#cbd5e1; flex-shrink:0; }
@@ -67,7 +69,7 @@
 </div>
 
 <!-- HEADER -->
-<header class="bg-blue-800 text-white shadow-2xl sticky top-0 z-30">
+<header class="bg-blue-800 text-white shadow-2xl sticky top-0 z-50">
   <div class="max-w-screen-2xl mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
     <div class="flex items-center gap-4">
       <svg class="w-9 h-9 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,11 +88,11 @@
 </header>
 
 <!-- MAIN -->
-<main class="max-w-screen-2xl mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-4 gap-10">
+<main class="max-w-screen-2xl mx-auto px-4 md:px-6 py-6 md:py-10 grid grid-cols-1 lg:grid-cols-4 gap-6 md:gap-10">
 
   <!-- SIDEBAR -->
   <aside class="lg:col-span-1">
-    <form id="search-form" onsubmit="handleSearch(event)" class="bg-white p-8 rounded-[40px] shadow-xl border border-slate-100 space-y-6 overflow-y-auto" style="max-height:calc(100vh - 7rem); position:sticky; top:7rem;">
+    <form id="search-form" onsubmit="handleSearch(event)" class="bg-white p-6 md:p-8 rounded-[40px] shadow-xl border border-slate-100 space-y-6 overflow-y-auto lg:sticky" style="max-height:calc(100vh - 7rem); top:7rem;">
       <h2 class="text-xl font-black text-slate-900 flex items-center gap-3">
         <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/>
@@ -275,33 +277,31 @@
 
     <!-- Controls bar -->
     <div id="results-controls" class="hidden">
-      <div class="bg-white p-6 rounded-[40px] shadow-lg border border-slate-100">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <!-- 3 tabs -->
-          <div class="flex gap-2 flex-wrap">
-            <button onclick="setViewMode('comparison')" id="btn-comparison"
-              class="px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl">
-              Shortlisted Hotels
-            </button>
-            <button onclick="setViewMode('qualitative')" id="btn-qualitative"
-              class="px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
-              Review Matrix
-            </button>
-            <button onclick="setViewMode('catalog')" id="btn-catalog"
-              class="px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
-              Room Catalog
-            </button>
-          </div>
-          <!-- Per-tab export buttons -->
-          <div class="flex gap-3">
+      <div class="bg-white p-4 md:p-6 rounded-[32px] md:rounded-[40px] shadow-lg border border-slate-100">
+        <!-- Tab row -->
+        <div class="flex items-center gap-2 overflow-x-auto pb-3 mb-3 border-b border-slate-100 scrollbar-none">
+          <button onclick="setViewMode('comparison')" id="btn-comparison"
+            class="flex-shrink-0 px-5 py-2.5 rounded-2xl text-[11px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-lg">
+            Shortlisted Hotels
+          </button>
+          <button onclick="setViewMode('qualitative')" id="btn-qualitative"
+            class="flex-shrink-0 px-5 py-2.5 rounded-2xl text-[11px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
+            Review Matrix
+          </button>
+          <button onclick="setViewMode('catalog')" id="btn-catalog"
+            class="flex-shrink-0 px-5 py-2.5 rounded-2xl text-[11px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100">
+            Room Catalog
+          </button>
+          <!-- Export buttons pushed right -->
+          <div class="ml-auto flex gap-2 flex-shrink-0">
             <button id="export-pdf-btn" onclick="exportHotelsPDF()"
-              class="bg-emerald-600 text-white px-5 py-3 rounded-[18px] font-black text-[11px] flex items-center gap-2 hover:bg-emerald-700 shadow-xl transition-all active:scale-95">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>
-              <span id="export-pdf-label">Export PDF</span>
+              class="bg-emerald-600 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-emerald-700 shadow-lg transition-all active:scale-95 whitespace-nowrap">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>
+              <span id="export-pdf-label">PDF</span>
             </button>
-            <button id="export-excel-btn" onclick="exportExcel()" class="hidden bg-blue-700 text-white px-5 py-3 rounded-[18px] font-black text-[11px] flex items-center gap-2 hover:bg-blue-800 shadow-xl transition-all active:scale-95">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-              Export Excel
+            <button id="export-excel-btn" onclick="exportExcel()" class="hidden bg-blue-700 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-blue-800 shadow-lg transition-all active:scale-95 whitespace-nowrap">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+              Excel
             </button>
           </div>
         </div>
@@ -362,6 +362,12 @@ const DEFAULT_MODELS = {
   deepseek:  'deepseek-chat',
   anthropic: 'claude-haiku-4-5-20251001',
   openai:    'gpt-4o-mini'
+};
+const KNOWN_RATES = {
+  MYR:1, USD:4.48, SGD:3.40, TWD:0.142, THB:0.131, JPY:0.0296, GBP:5.65,
+  EUR:4.87, IDR:0.0000285, VND:0.000175, HKD:0.574, KRW:0.0033,
+  AUD:2.84, AED:1.22, INR:0.053, PHP:0.079, CNY:0.618, CAD:3.32,
+  NZD:2.66, LKR:0.015, NPR:0.033
 };
 const CURRENCIES = [
   {code:'MYR',symbol:'RM'}, {code:'USD',symbol:'$'},   {code:'TWD',symbol:'NT$'},
@@ -579,8 +585,9 @@ function updateNightsDisplay() {
 
 function changeNights(delta) {
   const newNights = Math.max(1, getNights() + delta);
-  const checkIn = new Date(state.checkIn + 'T00:00:00');
-  state.checkOut = new Date(checkIn.getTime() + newNights * 86400000).toISOString().split('T')[0];
+  const [y,m,d] = state.checkIn.split('-').map(Number);
+  const co = new Date(y, m-1, d + newNights);
+  state.checkOut = `${co.getFullYear()}-${String(co.getMonth()+1).padStart(2,'0')}-${String(co.getDate()).padStart(2,'0')}`;
   buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
   updateNightsDisplay();
 }
@@ -732,10 +739,15 @@ SEARCH CONTEXT:
 ${locationNote ? '- ' + locationNote : ''}
 ${mrtNote}
 
-1. ROOM TYPES (exhaustive): Every room category (Superior Room, Deluxe Twin, Premier King, Executive Suite, Airbnb-style, Villa suite, etc. as applicable)
-   Estimated nightly price in ${state.currency} on: Official site, Booking.com, Agoda, Trip.com, Klook
+EXCHANGE RATE (CRITICAL — do NOT invert):
+"exchangeRateToMYR" means: how many MYR you get for 1 unit of ${state.currency}.
+Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
+(Key rates: SGD=3.40, USD=4.48, TWD=0.142, THB=0.131, JPY=0.030, EUR=4.87, GBP=5.65, IDR=0.0000285, HKD=0.574, KRW=0.0033, AUD=2.84, CNY=0.618)
+
+1. ROOM TYPES (minimum 3 categories per hotel): Standard/Deluxe/Suite tiers. Use realistic market rates visible on Booking.com/Agoda for ${state.city} around ${state.checkIn}.
+   Price in ${state.currency}/night on: Official site, Booking.com, Agoda, Trip.com, Klook
    ➜ BUDGET FILTER: Only include hotels where ≥1 room falls between ${state.minPrice}–${state.maxPrice} MYR/night
-   ➜ Exchange rate: provide 1 ${state.currency} = X MYR
+   ➜ exchangeRateToMYR: must be ~${KNOWN_RATES[state.currency]||1} (1 ${state.currency} in MYR)
 
 2. QUALITATIVE ANALYSIS (use real review snippets as evidence — rate 1–5 with 1-sentence summary):
    staffFriendliness | overallCondition | cleanliness | transitProximity | acPerformance
@@ -782,7 +794,9 @@ ${mrtNote}
 
 CRITICAL: Top 10 properties by review volume. Budget-filter strictly. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
 
-For each property provide: exhaustive room types with platform prices (Official, Booking, Agoda, Trip, Klook) in ${state.currency}, 10-factor qualitative analysis (1–5 + 1-sentence summary each), 3–4 pros, 2–3 cons, profile recommendations (Business/Family/Budget/Light Sleeper), proximity with exact MRT station name and distance, parking, booking links, exchange rate.
+EXCHANGE RATE (do NOT invert): "exchangeRateToMYR" = how many MYR for 1 ${state.currency}. Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR.
+
+For each property provide: minimum 3 room types (Standard/Deluxe/Suite tiers) with realistic market prices on each platform in ${state.currency} (use rates visible on Booking.com/Agoda for ${state.city}), 10-factor qualitative analysis (1–5 + 1-sentence summary each), 3–4 pros, 2–3 cons, profile recommendations (Business/Family/Budget/Light Sleeper), proximity with exact MRT station name and distance, parking, booking links, exchangeRateToMYR (~${KNOWN_RATES[state.currency]||1}).
 
 Return ONLY a valid JSON array matching this schema:
 [{"name":string,"type":"Hotel"|"Resort"|"Villa","stars":number,"guestRating":number,"reviewCount":number,"carParkAvailable":boolean,"exchangeRateToMYR":number,"roomTypes":[{"type":string,"sizeM2":string,"breakfastIncluded":boolean,"cancellationPolicy":string,"prices":{"official":number,"booking":number,"agoda":number,"trip":number,"klook":number}}],"reviewMetrics":{"staffFriendliness":{"rating":number,"summary":string},"overallCondition":{"rating":number,"summary":string},"cleanliness":{"rating":number,"summary":string},"transitProximity":{"rating":number,"summary":string},"acPerformance":{"rating":number,"summary":string},"noiseLevel":{"rating":number,"summary":string},"soundproofing":{"rating":number,"summary":string},"roomComfort":{"rating":number,"summary":string},"bathroomCondition":{"rating":number,"summary":string},"maintenanceQuality":{"rating":number,"summary":string}},"profileRecommendations":{"business":string,"family":string,"budget":string,"lightSleeper":string},"proximity":{"mrt":string,"beach":string,"airport":string},"pros":[string],"cons":[string],"links":{"booking":string,"agoda":string,"trip":string,"hotels":string,"klook":string,"tripadvisor":string}}]`;
@@ -947,7 +961,7 @@ function calculateScore(hotel) {
 }
 
 function filterAndScore(data) {
-  // Build a lat/lng lookup from real Places data if available
+  const knownRate = KNOWN_RATES[state.currency] || 1;
   const coordMap = {};
   if (lastRealHotels) {
     lastRealHotels.forEach(rh => {
@@ -956,7 +970,11 @@ function filterAndScore(data) {
   }
   return data
     .map(h => {
-      // Try to match coordinates by name
+      // Validate & correct exchange rate — AI often inverts it
+      const aiRate = h.exchangeRateToMYR || knownRate;
+      const validRate = (knownRate > 0 && Math.abs(aiRate - knownRate) / knownRate > 0.60)
+        ? knownRate : aiRate;
+
       const key = h.name.toLowerCase();
       const coords = coordMap[key] ||
         Object.entries(coordMap).find(([k]) => key.includes(k) || k.includes(key))?.[1] ||
@@ -964,12 +982,13 @@ function filterAndScore(data) {
       return {
         ...h,
         features: h.features || [],
+        exchangeRateToMYR: validRate,
         lat: coords?.lat || null,
         lng: coords?.lng || null,
         roomTypes: (h.roomTypes||[]).filter(room => {
           const prices = Object.values(room.prices||{}).filter(p=>p>0);
           if (!prices.length) return false;
-          const priceMYR = Math.min(...prices) * (h.exchangeRateToMYR||1);
+          const priceMYR = Math.min(...prices) * validRate;
           return priceMYR >= state.minPrice && priceMYR <= state.maxPrice;
         })
       };
@@ -1083,8 +1102,8 @@ async function handleSearch(e) {
 // ═══════════════════════════════════════════════════
 function setViewMode(mode) {
   viewMode = mode;
-  const active = 'px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-xl';
-  const idle   = 'px-6 py-3 rounded-2xl text-[12px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100';
+  const active = 'flex-shrink-0 px-5 py-2.5 rounded-2xl text-[11px] font-black tracking-wider transition-all bg-blue-700 text-white shadow-lg';
+  const idle   = 'flex-shrink-0 px-5 py-2.5 rounded-2xl text-[11px] font-black tracking-wider transition-all bg-slate-50 text-slate-400 hover:bg-slate-100';
   ['comparison','qualitative','catalog'].forEach(m => {
     const btn = document.getElementById('btn-'+m);
     if (btn) btn.className = m === mode ? active : idle;
@@ -1099,7 +1118,7 @@ function setViewMode(mode) {
   } else {
     pdfBtn.classList.remove('hidden');
     xlBtn.classList.add('hidden');
-    if (pdfLabel) pdfLabel.textContent = mode === 'qualitative' ? 'Export Matrix PDF' : 'Export Hotels PDF';
+    if (pdfLabel) pdfLabel.textContent = mode === 'qualitative' ? 'Matrix PDF' : 'Hotels PDF';
     pdfBtn.onclick = mode === 'qualitative' ? exportMatrixPDF : exportHotelsPDF;
   }
   renderResults();
@@ -1125,8 +1144,8 @@ function renderHotelCard(hotel, idx) {
     : `<span class="badge-est">AI Estimate</span>`;
 
   return `
-  <div class="bg-white rounded-[50px] shadow-lg border border-slate-100 overflow-hidden hover:shadow-2xl transition-all hover:border-blue-200/50 fade-in">
-    <div class="p-10">
+  <div id="hotel-card-${idx}" class="bg-white rounded-[50px] shadow-lg border border-slate-100 overflow-hidden hover:shadow-2xl transition-all hover:border-blue-200/50 fade-in">
+    <div class="p-6 md:p-10">
       <div class="flex justify-between items-start mb-10">
         <div class="flex-1">
           <div class="flex items-center gap-4 mb-3 flex-wrap">
@@ -1189,27 +1208,40 @@ function renderHotelCard(hotel, idx) {
   </div>`;
 }
 
+function buildPlatformUrl(platform, hotelName, city) {
+  const qh = encodeURIComponent(hotelName);
+  const qc = encodeURIComponent(hotelName + ' ' + city);
+  const ci = state.checkIn, co = state.checkOut;
+  switch(platform) {
+    case 'booking':     return `https://www.booking.com/searchresults.html?ss=${qc}&checkin=${ci}&checkout=${co}&dest_type=hotel&no_rooms=1&group_adults=2`;
+    case 'agoda':       return `https://www.agoda.com/search?q=${qc}&checkIn=${ci}&checkOut=${co}&rooms=1&adults=2`;
+    case 'trip':        return `https://www.trip.com/hotels/list/?searchType=H&keyword=${qh}&checkin=${ci}&checkout=${co}`;
+    case 'klook':       return `https://www.klook.com/hotels/?keyword=${qc}&checkIn=${ci}&checkOut=${co}`;
+    case 'hotels':      return `https://www.hotels.com/search.do?q-destination=${qc}&q-check-in-date=${ci}&q-check-out-date=${co}`;
+    case 'tripadvisor': return `https://www.tripadvisor.com/Search?q=${qc}`;
+    default: return '#';
+  }
+}
+
 function renderBookingLinks(hotel) {
-  const links = hotel.links || {};
   const platforms = [
-    {key:'booking', label:'Booking.com', color:'bg-blue-600'},
-    {key:'agoda',   label:'Agoda',       color:'bg-rose-600'},
-    {key:'trip',    label:'Trip.com',    color:'bg-blue-500'},
-    {key:'klook',   label:'Klook',       color:'bg-green-600'},
-    {key:'hotels',  label:'Hotels.com',  color:'bg-orange-600'},
+    {key:'booking',     label:'Booking.com', color:'bg-blue-600'},
+    {key:'agoda',       label:'Agoda',       color:'bg-rose-600'},
+    {key:'trip',        label:'Trip.com',    color:'bg-blue-500'},
+    {key:'klook',       label:'Klook',       color:'bg-green-600'},
+    {key:'hotels',      label:'Hotels.com',  color:'bg-orange-600'},
     {key:'tripadvisor', label:'TripAdvisor', color:'bg-emerald-700'},
   ];
-  const btns = platforms.filter(p => links[p.key]).map(p =>
-    `<a href="${links[p.key]}" target="_blank" rel="noopener"
+  const btns = platforms.map(p =>
+    `<a href="${buildPlatformUrl(p.key, hotel.name, state.city)}" target="_blank" rel="noopener"
       class="${p.color} text-white text-[10px] font-black px-4 py-2 rounded-xl hover:opacity-90 transition-all">
       ${p.label}
     </a>`
   ).join('');
-  if (!btns) return '';
   return `<div class="mt-6 flex items-center gap-3 flex-wrap">
     <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Book on:</span>
     ${btns}
-    <span class="text-[10px] text-slate-400 italic">Prices are estimates — verify on platform</span>
+    <span class="text-[10px] text-slate-400 italic">Pre-filled with hotel name + your dates</span>
   </div>`;
 }
 
@@ -1756,10 +1788,17 @@ async function renderMap(hotels) {
         <div style="font-size:11px;color:#475569;margin-bottom:4px">🚇 ${hotel.proximity?.mrt||'—'}</div>
         <div style="font-size:12px;font-weight:900;color:#059669">${priceStr} <span style="color:#94a3b8;font-weight:400;font-size:10px">est.</span></div>
         ${hotel.address ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${hotel.address}</div>` : ''}
-        <a href="${hotelMapUrl(hotel.name)}" target="_blank"
-           style="display:inline-block;margin-top:8px;font-size:10px;font-weight:900;color:#1d4ed8">
-          Open in ${mapProviderLabel()} ↗
-        </a>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <a href="${hotelMapUrl(hotel.name)}" target="_blank"
+             style="font-size:10px;font-weight:900;color:#1d4ed8;text-decoration:none">
+            ${mapProviderLabel()} ↗
+          </a>
+          <a href="#hotel-card-${idx}"
+             onclick="setTimeout(()=>document.getElementById('hotel-card-${idx}')?.scrollIntoView({behavior:'smooth'}),10)"
+             style="font-size:10px;font-weight:900;color:#059669;text-decoration:none">
+            View details ↓
+          </a>
+        </div>
       </div>`, { maxWidth: 280 });
 
     _mapMarkers.push(marker);
