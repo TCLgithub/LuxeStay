@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>LuxeStay — Screener Intelligence</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
@@ -783,7 +781,7 @@ YOUR TASK — analyse each hotel above and produce:
 SEARCH CONTEXT:
 - Location: ${state.city}${state.district ? ', ' + state.district : ''}${state.nearLocation ? ' (near ' + state.nearLocation + ')' : ''}
 - Dates: ${state.checkIn} to ${state.checkOut}
-- Budget: ${state.minPrice}–${state.maxPrice} MYR per night
+- Budget: ${state.minPrice}–${state.maxPrice} MYR per night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night)
 - Currency: ${state.currency}
 - Types wanted: ${state.accommodationTypes.join(', ')}
 - MRT preference: ${state.maxMRTWalk === 'any' ? 'No restriction' : state.maxMRTWalk === 'walk' ? 'Walking distance only' : 'Within ' + state.maxMRTWalk}
@@ -797,7 +795,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 
 1. ROOM TYPES (minimum 3 categories per hotel): Standard/Deluxe/Suite tiers. Use realistic market rates visible on Booking.com/Agoda for ${state.city} around ${state.checkIn}.
    Price in ${state.currency}/night on: Official site, Booking.com, Agoda, Trip.com, Expedia
-   ➜ BUDGET FILTER: Only include hotels where ≥1 room falls between ${state.minPrice}–${state.maxPrice} MYR/night
+   ➜ BUDGET FILTER: Only include hotels where ≥1 room costs ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night (= ${state.minPrice}–${state.maxPrice} MYR/night). EXCLUDE luxury hotels above this range.
    ➜ exchangeRateToMYR: must be ~${KNOWN_RATES[state.currency]||1} (1 ${state.currency} in MYR)
 
 2. QUALITATIVE ANALYSIS (use real review snippets as evidence — rate 1–5 with 1-sentence summary):
@@ -840,10 +838,10 @@ function buildPromptAIOnly() {
     ? `PRIORITY: Only include properties within ${state.maxMRTWalk === 'walk' ? 'walking distance' : state.maxMRTWalk} of MRT/metro.` : '';
   return `Act as a world-class travel data aggregator. Screen top-rated accommodations in ${locParts} for ${state.checkIn} to ${state.checkOut}.
 ${preferred}
-Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5 | Budget: ${state.minPrice}–${state.maxPrice} MYR/night | Currency: ${state.currency}
+Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5 | Budget: ${state.minPrice}–${state.maxPrice} MYR/night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night) | Currency: ${state.currency}
 ${mrtNote}
 
-CRITICAL: Top ${state.maxResults || 12} properties by review volume. Budget-filter strictly. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
+CRITICAL: Top ${state.maxResults || 12} properties by review volume. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
 
 EXCHANGE RATE (do NOT invert): "exchangeRateToMYR" = how many MYR for 1 ${state.currency}. Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR.
 
@@ -1749,39 +1747,38 @@ function updateExchangeRateBadge(hotels) {
 // ═══════════════════════════════════════════════════
 // MAP
 // ═══════════════════════════════════════════════════
-let _map = null;
-let _mapMarkers = [];
-let _radiusCircle = null;
+let _gmap = null;
+let _gmarkers = [];
+let _gcircle = null;
+let _ginfoWindow = null;
 let _mapVisible = true;
+let _gmapsKey = '';
+
+async function loadGoogleMapsApi() {
+  if (window.google && window.google.maps) return true;
+  if (!_gmapsKey) return false;
+  return new Promise(resolve => {
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${_gmapsKey}`;
+    s.async = true;
+    s.onload  = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+}
+
+function clearGoogleMap() {
+  _gmarkers.forEach(m => m.setMap(null));
+  _gmarkers = [];
+  if (_gcircle) { _gcircle.setMap(null); _gcircle = null; }
+  if (_ginfoWindow) { _ginfoWindow.close(); }
+}
 
 function toggleMap() {
   _mapVisible = !_mapVisible;
   document.getElementById('map-inner').style.display = _mapVisible ? '' : 'none';
   document.getElementById('map-toggle-btn').textContent = _mapVisible ? 'Hide Map ▲' : 'Show Map ▼';
-  if (_mapVisible && _map) setTimeout(() => _map.invalidateSize(), 50);
-}
-
-function initMap(centerLat, centerLng, zoom) {
-  if (_map) { _map.remove(); _map = null; }
-  _map = L.map('hotel-map', { zoomControl: true, scrollWheelZoom: true })
-    .setView([centerLat, centerLng], zoom || 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19
-  }).addTo(_map);
-}
-
-function makeMarkerIcon(label) {
-  return L.divIcon({
-    className: '',
-    html: `<div style="
-      background:#1d4ed8;color:#fff;font-size:10px;font-weight:900;
-      padding:5px 8px;border-radius:12px;white-space:nowrap;
-      box-shadow:0 3px 10px rgba(0,0,0,0.25);border:2px solid #fff;
-      max-width:160px;overflow:hidden;text-overflow:ellipsis;
-    ">${label}</div>`,
-    iconAnchor: [0, 0]
-  });
+  if (_mapVisible && _gmap) google.maps.event.trigger(_gmap, 'resize');
 }
 
 function getMapProvider() {
@@ -1808,7 +1805,7 @@ function mapProviderLabel() {
   return 'Google Maps';
 }
 
-// Geocode hotels without coordinates using OpenStreetMap Nominatim (free, no key)
+// Geocode hotels: try Google Geocoding API first (via backend), fall back to Nominatim
 async function geocodeHotels(hotels) {
   const missing = hotels.filter(h => !h.lat || !h.lng);
   if (!missing.length) return hotels;
@@ -1816,23 +1813,30 @@ async function geocodeHotels(hotels) {
   const mapEl = document.getElementById('map-count');
   if (mapEl) mapEl.textContent = `Locating ${missing.length} hotels on map…`;
 
-  const geocoded = hotels.map(h => ({...h})); // shallow copy
+  const geocoded = hotels.map(h => ({...h}));
+
+  const useGoogle = _gmapsKey !== '';
+
   for (let i = 0; i < geocoded.length; i++) {
     if (geocoded[i].lat && geocoded[i].lng) continue;
+    const q = geocoded[i].name + ' ' + state.city;
     try {
-      const q = encodeURIComponent(geocoded[i].name + ' ' + state.city);
-      const r = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&accept-language=en`,
+      if (useGoogle) {
+        const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+        if (r.ok) {
+          const d = await r.json();
+          if (d.lat) { geocoded[i].lat = d.lat; geocoded[i].lng = d.lng; continue; }
+        }
+      }
+      // Nominatim fallback (1 req/sec limit)
+      const r2 = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=en`,
         { headers: { 'User-Agent': 'LuxeStay-Screener/1.0' } }
       );
-      const data = await r.json();
-      if (data.length) {
-        geocoded[i].lat = parseFloat(data[0].lat);
-        geocoded[i].lng = parseFloat(data[0].lon);
-      }
+      const d2 = await r2.json();
+      if (d2.length) { geocoded[i].lat = parseFloat(d2[0].lat); geocoded[i].lng = parseFloat(d2[0].lon); }
+      if (i < geocoded.length - 1) await new Promise(res => setTimeout(res, 1100));
     } catch {}
-    // Nominatim requires max 1 req/sec
-    if (i < geocoded.length - 1) await new Promise(res => setTimeout(res, 1100));
   }
   return geocoded;
 }
@@ -1842,7 +1846,6 @@ async function renderMap(hotels) {
   mapSection.classList.remove('hidden');
   document.getElementById('hotel-map').style.height = '440px';
 
-  // Show section immediately, geocode in background if needed
   let workingHotels = hotels;
   if (hotels.some(h => !h.lat || !h.lng)) {
     workingHotels = await geocodeHotels(hotels);
@@ -1850,14 +1853,14 @@ async function renderMap(hotels) {
 
   const hotelsWithCoords = workingHotels.filter(h => h.lat && h.lng);
 
-  // Still no coordinates after geocoding — show linked fallback list
+  // Fallback: no coordinates at all — show clickable list
   if (!hotelsWithCoords.length) {
     const provider = mapProviderLabel();
     document.getElementById('hotel-map').style.height = 'auto';
     document.getElementById('hotel-map').innerHTML = `
       <div style="padding:20px 24px;background:#f8fafc">
         <p style="font-size:11px;font-weight:900;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">
-          Could not locate hotels — click each to open on ${provider}
+          Could not locate hotels on map — click to open on ${provider}
         </p>
         ${hotels.slice(0,10).map((h,i) => `
           <a href="${hotelMapUrl(h.name)}" target="_blank" rel="noopener"
@@ -1871,74 +1874,127 @@ async function renderMap(hotels) {
     return;
   }
 
-  // We have coordinates — render Leaflet map
   const avgLat = hotelsWithCoords.reduce((s,h)=>s+h.lat,0) / hotelsWithCoords.length;
   const avgLng = hotelsWithCoords.reduce((s,h)=>s+h.lng,0) / hotelsWithCoords.length;
 
-  initMap(avgLat, avgLng, 13);
+  // Try Google Maps
+  const mapsReady = await loadGoogleMapsApi();
+  if (!mapsReady) {
+    // No Google Maps key — show fallback list with Google Maps links
+    const provider = mapProviderLabel();
+    document.getElementById('hotel-map').style.height = 'auto';
+    document.getElementById('hotel-map').innerHTML = `
+      <div style="padding:16px 24px;background:#fefce8;border-bottom:1px solid #fde68a">
+        <p style="font-size:11px;font-weight:900;color:#92400e;margin-bottom:4px">Google Maps key not configured</p>
+        <p style="font-size:10px;color:#a16207">Set GOOGLE_MAPS_API_KEY + GOOGLE_MAPS_API_KEY in Render env vars to enable the interactive map.</p>
+      </div>
+      <div style="padding:16px 24px;background:#f8fafc">
+        ${hotelsWithCoords.slice(0,10).map((h,i) => `
+          <a href="${hotelMapUrl(h.name)}" target="_blank" rel="noopener"
+             style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;text-decoration:none;color:#1e293b;font-size:12px;font-weight:800;margin-bottom:6px;">
+             <span style="background:#1d4ed8;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${i+1}</span>
+             <span style="flex:1">${h.name}</span>
+             <span style="font-size:10px;color:#3b82f6;font-weight:700">${provider} ↗</span>
+          </a>`).join('')}
+      </div>`;
+    document.getElementById('map-count').textContent = `(${hotelsWithCoords.length} hotels — view individually)`;
+    return;
+  }
 
-  _mapMarkers.forEach(m => m.remove());
-  _mapMarkers = [];
-  if (_radiusCircle) { _radiusCircle.remove(); _radiusCircle = null; }
+  // Google Maps is ready — render interactive map
+  clearGoogleMap();
 
-  if (state.nearLocation && hotelsWithCoords.length) {
-    _radiusCircle = L.circle([avgLat, avgLng], {
-      radius: state.radiusKm * 1000,
-      color: '#3b82f6', fillColor: '#3b82f6',
-      fillOpacity: 0.08, weight: 2, dashArray: '6 4'
-    }).addTo(_map);
+  if (!_gmap) {
+    _ginfoWindow = new google.maps.InfoWindow();
+    _gmap = new google.maps.Map(document.getElementById('hotel-map'), {
+      center: { lat: avgLat, lng: avgLng },
+      zoom: 13,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+      zoomControl: true
+    });
+  } else {
+    _gmap.setCenter({ lat: avgLat, lng: avgLng });
+    _gmap.setZoom(13);
+  }
+
+  // Draw radius circle if a reference location is set
+  if (state.nearLocation) {
+    _gcircle = new google.maps.Circle({
+      map: _gmap,
+      center: { lat: avgLat, lng: avgLng },
+      radius: state.maxKm * 1000,
+      strokeColor: '#3b82f6', strokeOpacity: 0.5, strokeWeight: 2,
+      fillColor: '#3b82f6', fillOpacity: 0.06
+    });
     document.getElementById('radius-legend').classList.remove('hidden');
   } else {
     document.getElementById('radius-legend').classList.add('hidden');
   }
 
-  const bounds = [];
+  const bounds = new google.maps.LatLngBounds();
   hotelsWithCoords.forEach((hotel, idx) => {
-    const shortName = hotel.name.length > 22 ? hotel.name.slice(0,20)+'…' : hotel.name;
-    const marker = L.marker([hotel.lat, hotel.lng], {
-      icon: makeMarkerIcon(`${idx+1}. ${shortName}`)
-    }).addTo(_map);
+    const pos = { lat: hotel.lat, lng: hotel.lng };
 
     const bestPrice = (() => {
       const prices = (hotel.roomTypes||[]).flatMap(r => Object.values(r.prices||{}).filter(p=>p>0));
       return prices.length ? Math.min(...prices) : null;
     })();
     const priceStr = bestPrice ? `~${fmtPrice(bestPrice, state.currency)}/night` : 'Price N/A';
+    const bestMYR  = bestPrice ? fmtPrice(bestPrice * (hotel.exchangeRateToMYR||1), 'MYR') + '/night' : '';
 
-    marker.bindPopup(`
-      <div style="font-family:'Inter',sans-serif;min-width:200px;padding:4px">
+    // Numbered label marker using a pin with a letter/number
+    const markerEl = document.createElement('div');
+    markerEl.style.cssText = `
+      background:#1d4ed8;color:#fff;font-size:11px;font-weight:900;
+      padding:5px 9px;border-radius:12px;white-space:nowrap;
+      box-shadow:0 3px 10px rgba(0,0,0,0.25);border:2px solid #fff;
+      max-width:160px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;`;
+    const shortName = hotel.name.length > 22 ? hotel.name.slice(0,20)+'…' : hotel.name;
+    markerEl.textContent = `${idx+1}. ${shortName}`;
+
+    const marker = new google.maps.Marker({
+      position: pos,
+      map: _gmap,
+      title: hotel.name,
+      label: { text: `${idx+1}`, color: '#fff', fontWeight: 'bold', fontSize: '12px' },
+      zIndex: hotelsWithCoords.length - idx
+    });
+
+    const infoContent = `
+      <div style="font-family:'Inter',sans-serif;min-width:210px;padding:4px 2px">
         <div style="font-weight:900;font-size:13px;color:#1e293b;margin-bottom:6px">${hotel.name}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          <span style="background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">LuxeScore ${hotel.compositeScore}/10</span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">Score ${hotel.compositeScore}/10</span>
           <span style="background:#fefce8;color:#92400e;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">★ ${hotel.guestRating}</span>
         </div>
-        <div style="font-size:11px;color:#475569;margin-bottom:4px">🚇 ${hotel.proximity?.mrt||'—'}</div>
-        <div style="font-size:12px;font-weight:900;color:#059669">${priceStr} <span style="color:#94a3b8;font-weight:400;font-size:10px">est.</span></div>
-        ${hotel.address ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${hotel.address}</div>` : ''}
-        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <div style="font-size:11px;color:#475569;margin-bottom:3px">🚇 ${hotel.proximity?.mrt||'—'}</div>
+        <div style="font-size:12px;font-weight:900;color:#059669">${priceStr}${bestMYR ? ` <span style="color:#ea580c;font-weight:700;font-size:10px">(${bestMYR})</span>` : ''}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
           <a href="${hotelMapUrl(hotel.name)}" target="_blank"
-             style="font-size:10px;font-weight:900;color:#1d4ed8;text-decoration:none">
-            ${mapProviderLabel()} ↗
-          </a>
+             style="font-size:10px;font-weight:900;color:#1d4ed8;text-decoration:none">Google Maps ↗</a>
           <a href="#hotel-card-${idx}"
              onclick="setTimeout(()=>document.getElementById('hotel-card-${idx}')?.scrollIntoView({behavior:'smooth'}),10)"
-             style="font-size:10px;font-weight:900;color:#059669;text-decoration:none">
-            View details ↓
-          </a>
+             style="font-size:10px;font-weight:900;color:#059669;text-decoration:none">Details ↓</a>
         </div>
-      </div>`, { maxWidth: 280 });
+      </div>`;
 
-    _mapMarkers.push(marker);
-    bounds.push([hotel.lat, hotel.lng]);
+    marker.addListener('click', () => {
+      _ginfoWindow.setContent(infoContent);
+      _ginfoWindow.open(_gmap, marker);
+    });
+
+    _gmarkers.push(marker);
+    bounds.extend(pos);
   });
 
-  if (bounds.length > 1) _map.fitBounds(bounds, { padding: [40, 40] });
+  if (hotelsWithCoords.length > 1) _gmap.fitBounds(bounds, 60);
 
   document.getElementById('map-count').textContent =
     hotelsWithCoords.length === workingHotels.length
-      ? `All ${hotelsWithCoords.length} hotels mapped`
+      ? `All ${hotelsWithCoords.length} hotels on Google Maps`
       : `${hotelsWithCoords.length} of ${workingHotels.length} hotels mapped`;
-  setTimeout(() => _map.invalidateSize(), 100);
 }
 
 // ═══════════════════════════════════════════════════
@@ -2081,6 +2137,11 @@ function toggleSavedPanel() {
 }
 
 function init() {
+  // Fetch Google Maps key from backend (non-blocking)
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    if (cfg.googleMapsKey) _gmapsKey = cfg.googleMapsKey;
+  }).catch(() => {});
+
   buildDatePicker('checkin-picker',  'Check-In Date',  state.checkIn,  'checkIn');
   buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
   updateNightsDisplay();
