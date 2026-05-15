@@ -213,6 +213,8 @@
       <div class="space-y-1">
         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Min Guest Rating</label>
         <select id="min-rating" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm cursor-pointer">
+          <option value="3.0">3.0+ (Any)</option>
+          <option value="3.5">3.5+</option>
           <option value="4.0">4.0+</option>
           <option value="4.2">4.2+</option>
           <option value="4.5" selected>4.5+</option>
@@ -1224,16 +1226,28 @@ function renderHotelCard(hotel, idx) {
 }
 
 function buildPlatformUrl(platform, hotelName, city) {
+  // Use hotel name only (not city) for better direct-hotel matching on each platform
   const qh = encodeURIComponent(hotelName);
-  const qc = encodeURIComponent(hotelName + ' ' + city);
+  const qhc = encodeURIComponent(hotelName + ' ' + city);
   const ci = state.checkIn, co = state.checkOut;
+  const nights = getNights();
+  // Parse dates for platforms that need separate day/month/year params
+  const [ciy, cim, cid] = ci.split('-');
+  const [coy, com, cod] = co.split('-');
   switch(platform) {
-    case 'booking':     return `https://www.booking.com/searchresults.html?ss=${qc}&checkin=${ci}&checkout=${co}&dest_type=hotel&no_rooms=1&group_adults=2`;
-    case 'agoda':       return `https://www.agoda.com/search?q=${qc}&checkIn=${ci}&checkOut=${co}&rooms=1&adults=2`;
-    case 'trip':        return `https://www.trip.com/hotels/list/?searchType=H&keyword=${qh}&checkin=${ci}&checkout=${co}`;
-    case 'klook':       return `https://www.klook.com/hotels/?keyword=${qc}&checkIn=${ci}&checkOut=${co}`;
-    case 'hotels':      return `https://www.hotels.com/search.do?q-destination=${qc}&q-check-in-date=${ci}&q-check-out-date=${co}`;
-    case 'tripadvisor': return `https://www.tripadvisor.com/Search?q=${qc}`;
+    case 'booking':
+      // search.html gives better single-hotel results than searchresults.html
+      return `https://www.booking.com/search.html?ss=${qh}&dest_type=hotel&checkin=${ci}&checkout=${co}&no_rooms=1&group_adults=2`;
+    case 'agoda':
+      return `https://www.agoda.com/search?q=${qhc}&checkIn=${ci}&checkOut=${co}&los=${nights}&adults=2&rooms=1`;
+    case 'trip':
+      return `https://www.trip.com/hotels/?keyword=${qhc}&checkin=${ci}&checkout=${co}&curr=MYR`;
+    case 'klook':
+      return `https://www.klook.com/en-MY/hotels/?q=${qhc}`;
+    case 'hotels':
+      return `https://www.hotels.com/search.do?q-destination=${qhc}&q-check-in-date=${ci}&q-check-out-date=${co}&q-rooms=1&q-room-0-adults=2`;
+    case 'tripadvisor':
+      return `https://www.tripadvisor.com/Search?q=${qhc}&searchSessionId=&geo=`;
     default: return '#';
   }
 }
@@ -1733,37 +1747,70 @@ function mapProviderLabel() {
   return 'Google Maps';
 }
 
-async function renderMap(hotels) {
-  const hotelsWithCoords = hotels.filter(h => h.lat && h.lng);
-  const mapSection = document.getElementById('map-section');
+// Geocode hotels without coordinates using OpenStreetMap Nominatim (free, no key)
+async function geocodeHotels(hotels) {
+  const missing = hotels.filter(h => !h.lat || !h.lng);
+  if (!missing.length) return hotels;
 
-  // No coordinates — show individual map links per hotel
+  const mapEl = document.getElementById('map-count');
+  if (mapEl) mapEl.textContent = `Locating ${missing.length} hotels on map…`;
+
+  const geocoded = hotels.map(h => ({...h})); // shallow copy
+  for (let i = 0; i < geocoded.length; i++) {
+    if (geocoded[i].lat && geocoded[i].lng) continue;
+    try {
+      const q = encodeURIComponent(geocoded[i].name + ' ' + state.city);
+      const r = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&accept-language=en`,
+        { headers: { 'User-Agent': 'LuxeStay-Screener/1.0' } }
+      );
+      const data = await r.json();
+      if (data.length) {
+        geocoded[i].lat = parseFloat(data[0].lat);
+        geocoded[i].lng = parseFloat(data[0].lon);
+      }
+    } catch {}
+    // Nominatim requires max 1 req/sec
+    if (i < geocoded.length - 1) await new Promise(res => setTimeout(res, 1100));
+  }
+  return geocoded;
+}
+
+async function renderMap(hotels) {
+  const mapSection = document.getElementById('map-section');
+  mapSection.classList.remove('hidden');
+  document.getElementById('hotel-map').style.height = '440px';
+
+  // Show section immediately, geocode in background if needed
+  let workingHotels = hotels;
+  if (hotels.some(h => !h.lat || !h.lng)) {
+    workingHotels = await geocodeHotels(hotels);
+  }
+
+  const hotelsWithCoords = workingHotels.filter(h => h.lat && h.lng);
+
+  // Still no coordinates after geocoding — show linked fallback list
   if (!hotelsWithCoords.length) {
     const provider = mapProviderLabel();
-    const linkList = hotels.slice(0,10).map((h,i) =>
-      `<a href="${hotelMapUrl(h.name)}" target="_blank" rel="noopener"
-         style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;text-decoration:none;color:#1e293b;font-size:12px;font-weight:800;margin-bottom:6px;">
-         <span style="background:#1d4ed8;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${i+1}</span>
-         <span style="flex:1">${h.name}</span>
-         <span style="font-size:10px;color:#3b82f6;font-weight:700">${provider} ↗</span>
-       </a>`
-    ).join('');
-
-    mapSection.classList.remove('hidden');
     document.getElementById('hotel-map').style.height = 'auto';
     document.getElementById('hotel-map').innerHTML = `
       <div style="padding:20px 24px;background:#f8fafc">
         <p style="font-size:11px;font-weight:900;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">
-          Click to view each hotel on ${provider} (coordinates not yet available — deploy server.js to enable live map)
+          Could not locate hotels — click each to open on ${provider}
         </p>
-        ${linkList}
+        ${hotels.slice(0,10).map((h,i) => `
+          <a href="${hotelMapUrl(h.name)}" target="_blank" rel="noopener"
+             style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;text-decoration:none;color:#1e293b;font-size:12px;font-weight:800;margin-bottom:6px;">
+             <span style="background:#1d4ed8;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${i+1}</span>
+             <span style="flex:1">${h.name}</span>
+             <span style="font-size:10px;color:#3b82f6;font-weight:700">${provider} ↗</span>
+          </a>`).join('')}
       </div>`;
-    document.getElementById('map-count').textContent = `(${hotels.length} hotels — view individually on ${provider})`;
+    document.getElementById('map-count').textContent = `(${hotels.length} hotels — view individually)`;
     return;
   }
 
   // We have coordinates — render Leaflet map
-  document.getElementById('hotel-map').style.height = '440px';
   const avgLat = hotelsWithCoords.reduce((s,h)=>s+h.lat,0) / hotelsWithCoords.length;
   const avgLng = hotelsWithCoords.reduce((s,h)=>s+h.lng,0) / hotelsWithCoords.length;
 
@@ -1826,8 +1873,10 @@ async function renderMap(hotels) {
 
   if (bounds.length > 1) _map.fitBounds(bounds, { padding: [40, 40] });
 
-  mapSection.classList.remove('hidden');
-  document.getElementById('map-count').textContent = `${hotelsWithCoords.length} of ${hotels.length} hotels mapped`;
+  document.getElementById('map-count').textContent =
+    hotelsWithCoords.length === workingHotels.length
+      ? `All ${hotelsWithCoords.length} hotels mapped`
+      : `${hotelsWithCoords.length} of ${workingHotels.length} hotels mapped`;
   setTimeout(() => _map.invalidateSize(), 100);
 }
 
