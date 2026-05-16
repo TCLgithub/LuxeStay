@@ -1009,6 +1009,37 @@ function calculateScore(hotel) {
   return Math.min(10, Math.round(s * 10) / 10);
 }
 
+let _nearLat = null, _nearLng = null;
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2
+    + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Geocode the reference landmark (nearLocation) so we can compute real distances
+async function geocodeNearLocation() {
+  _nearLat = null; _nearLng = null;
+  if (!state.nearLocation) return;
+  const q = state.nearLocation + ', ' + state.city;
+  try {
+    if (_gmapsKey) {
+      const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+      if (r.ok) { const d = await r.json(); if (d.lat) { _nearLat = d.lat; _nearLng = d.lng; return; } }
+    }
+    // Nominatim fallback
+    const r2 = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=en`,
+      { headers: { 'User-Agent': 'LuxeStay-Screener/1.0' } }
+    );
+    const d2 = await r2.json();
+    if (d2.length) { _nearLat = parseFloat(d2[0].lat); _nearLng = parseFloat(d2[0].lon); }
+  } catch {}
+}
+
 function filterAndScore(data) {
   const knownRate = KNOWN_RATES[state.currency] || 1;
   const coordMap = {};
@@ -1039,22 +1070,33 @@ function filterAndScore(data) {
           return { ...r, _inBudget: !bestMYR || (bestMYR >= state.minPrice && bestMYR <= state.maxPrice) };
         });
 
+      // Compute distance from reference landmark if coordinates are available
+      const distKm = (_nearLat && coords?.lat && coords?.lng)
+        ? haversineKm(_nearLat, _nearLng, coords.lat, coords.lng)
+        : null;
+
       return {
         ...h,
         features: h.features || [],
         exchangeRateToMYR: validRate,
         lat: coords?.lat || null,
         lng: coords?.lng || null,
+        distKm,
         roomTypes
       };
     })
     .filter(h => {
       if (!h.roomTypes.length) return false;
-      // Include only if at least one room type falls within the MYR budget range
-      // (20% tolerance above maxPrice to account for AI price estimation variance)
+
+      // Distance filter — only applied when we have both the reference coords and hotel coords
+      const hasDistFilter = _nearLat && state.nearLocation && (state.minKm > 0 || state.maxKm < 50);
+      if (hasDistFilter && h.distKm !== null) {
+        if (h.distKm < state.minKm || h.distKm > state.maxKm) return false;
+      }
+
+      // Budget filter: include if at least one room is within MYR range (20% tolerance above max)
       const hasAffordableRoom = h.roomTypes.some(r => r._inBudget);
       if (hasAffordableRoom) return true;
-      // Fallback: include if cheapest room is within 20% of max (estimation leeway)
       const allMYR = h.roomTypes.flatMap(r =>
         Object.values(r.prices||{}).filter(p=>p>0).map(p => p * h.exchangeRateToMYR)
       );
@@ -1116,6 +1158,9 @@ async function handleSearch(e) {
   document.getElementById('fb-log').classList.add('hidden');
   document.getElementById('fb-entries').innerHTML = '';
   setStep(1,'active'); setStep(2,'pending','Prices, quality scores, pros/cons');
+
+  // Geocode the reference landmark so distance filtering works
+  if (state.nearLocation) await geocodeNearLocation();
 
   let prompt;
 
@@ -1241,7 +1286,12 @@ function renderHotelCard(hotel, idx) {
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-10 mb-10">
         <!-- Proximity & Parking -->
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-${hotel.distKm !== null && hotel.distKm !== undefined ? '4' : '3'} gap-4">
+          ${hotel.distKm !== null && hotel.distKm !== undefined ? `
+          <div class="bg-blue-50 p-5 rounded-[32px] border border-blue-100 shadow-inner">
+            <p class="text-[10px] font-black text-blue-400 uppercase mb-2 tracking-widest">From ${state.nearLocation||'Ref.'}</p>
+            <p class="text-[12px] font-black text-blue-800 leading-tight">${hotel.distKm.toFixed(1)} km</p>
+          </div>` : ''}
           <div class="bg-slate-50 p-5 rounded-[32px] border border-slate-100 shadow-inner">
             <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Transport</p>
             <p class="text-[12px] font-black text-slate-800 leading-tight">${hotel.proximity?.mrt||'—'}</p>
@@ -1759,7 +1809,7 @@ async function loadGoogleMapsApi() {
   if (!_gmapsKey) return false;
   return new Promise(resolve => {
     const s = document.createElement('script');
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${_gmapsKey}`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${_gmapsKey}&libraries=maps,marker&loading=async`;
     s.async = true;
     s.onload  = () => resolve(true);
     s.onerror = () => resolve(false);
@@ -1886,7 +1936,7 @@ async function renderMap(hotels) {
     document.getElementById('hotel-map').innerHTML = `
       <div style="padding:16px 24px;background:#fefce8;border-bottom:1px solid #fde68a">
         <p style="font-size:11px;font-weight:900;color:#92400e;margin-bottom:4px">Google Maps key not configured</p>
-        <p style="font-size:10px;color:#a16207">Set GOOGLE_MAPS_API_KEY + GOOGLE_MAPS_API_KEY in Render env vars to enable the interactive map.</p>
+        <p style="font-size:10px;color:#a16207">Set <b>GOOGLE_MAPS_API_KEY</b> (for map + geocoding) and <b>GOOGLE_PLACES_API_KEY</b> (for hotel search) in Render → Environment Variables.</p>
       </div>
       <div style="padding:16px 24px;background:#f8fafc">
         ${hotelsWithCoords.slice(0,10).map((h,i) => `
@@ -1969,6 +2019,7 @@ async function renderMap(hotels) {
           <span style="background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">Score ${hotel.compositeScore}/10</span>
           <span style="background:#fefce8;color:#92400e;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:900">★ ${hotel.guestRating}</span>
         </div>
+        ${hotel.distKm !== null && hotel.distKm !== undefined ? `<div style="font-size:11px;color:#1d4ed8;font-weight:700;margin-bottom:3px">📍 ${hotel.distKm.toFixed(1)} km from ${state.nearLocation||'ref'}</div>` : ''}
         <div style="font-size:11px;color:#475569;margin-bottom:3px">🚇 ${hotel.proximity?.mrt||'—'}</div>
         <div style="font-size:12px;font-weight:900;color:#059669">${priceStr}${bestMYR ? ` <span style="color:#ea580c;font-weight:700;font-size:10px">(${bestMYR})</span>` : ''}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
@@ -1991,10 +2042,23 @@ async function renderMap(hotels) {
 
   if (hotelsWithCoords.length > 1) _gmap.fitBounds(bounds, 60);
 
+  // For hotels geocoded in this step (AI-only mode), propagate distKm back to results
+  // and hide map markers that fall outside the km range
+  const hasDistFilter = _nearLat && state.nearLocation && (state.minKm > 0 || state.maxKm < 50);
+  if (hasDistFilter) {
+    _gmarkers.forEach((marker, idx) => {
+      const h = hotelsWithCoords[idx];
+      if (!h) return;
+      const dist = haversineKm(_nearLat, _nearLng, h.lat, h.lng);
+      if (dist < state.minKm || dist > state.maxKm) marker.setMap(null);
+    });
+  }
+
+  const visibleCount = _gmarkers.filter(m => m.getMap()).length;
   document.getElementById('map-count').textContent =
-    hotelsWithCoords.length === workingHotels.length
-      ? `All ${hotelsWithCoords.length} hotels on Google Maps`
-      : `${hotelsWithCoords.length} of ${workingHotels.length} hotels mapped`;
+    visibleCount === workingHotels.length
+      ? `All ${visibleCount} hotels on Google Maps`
+      : `${visibleCount} of ${workingHotels.length} hotels mapped`;
 }
 
 // ═══════════════════════════════════════════════════
