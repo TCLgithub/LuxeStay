@@ -761,13 +761,17 @@ function buildPromptWithRealData(hotels) {
   const preferred = state.preferredHotel
     ? `Also include: "${state.preferredHotel}" if not already listed.` : '';
 
-  const hotelContext = hotels.map((h, i) => {
+  // Cap at maxResults+4 (sorted by rating) to keep prompt size manageable
+  const cap = Math.min(hotels.length, (state.maxResults || 12) + 4);
+  const topHotels = [...hotels].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, cap);
+
+  const hotelContext = topHotels.map((h, i) => {
     const revText = h.reviews.length
-      ? h.reviews.map(rv => `       [${rv.rating}★] "${rv.text}"`).join('\n')
+      ? h.reviews.slice(0, 3).map(rv => `       [${rv.rating}★] "${(rv.text||'').slice(0, 120)}"`).join('\n')
       : '       (No review snippets available)';
     return `${i+1}. ${h.name}
      Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews
-     Address: ${h.address}${h.website ? `\n     Website: ${h.website}` : ''}
+     Address: ${h.address}
      Real Guest Reviews:
 ${revText}`;
   }).join('\n\n');
