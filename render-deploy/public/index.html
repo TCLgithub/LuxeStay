@@ -283,6 +283,15 @@
         <div id="fb-entries" class="space-y-1.5"></div>
       </div>
 
+      <!-- Filter Diagnostics -->
+      <div id="filter-diag-box" class="hidden bg-slate-50 rounded-2xl border border-slate-100 p-4">
+        <button onclick="document.getElementById('filter-diag-body').classList.toggle('hidden')"
+          class="w-full flex items-center justify-between text-[9px] font-black text-slate-400 uppercase tracking-widest">
+          <span>Filter Report</span><span>▾</span>
+        </button>
+        <div id="filter-diag-body" class="hidden mt-2 space-y-1 max-h-48 overflow-y-auto"></div>
+      </div>
+
       <!-- Submit -->
       <button type="submit" id="search-btn"
         class="w-full bg-blue-700 hover:bg-blue-800 text-white font-black py-5 rounded-3xl flex items-center justify-center gap-4 transition-all shadow-2xl active:scale-95 disabled:opacity-60">
@@ -1199,6 +1208,21 @@ function sentimentGradient(r) {
 // ═══════════════════════════════════════════════════
 // SEARCH HANDLER
 // ═══════════════════════════════════════════════════
+function showFilterDiag() {
+  const box = document.getElementById('filter-diag-box');
+  const body = document.getElementById('filter-diag-body');
+  const pre = window._preFilterDiag || [];
+  const post = (window._filterDiag || []).filter(d => d.reason !== 'OK');
+  if (!pre.length && !post.length) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const row = (label, color, items) => items.map(d =>
+    `<div class="flex gap-2 text-[10px]"><span class="font-black ${color} flex-shrink-0">${label}</span><span class="text-slate-600">${d.name} — <span class="text-slate-400">${d.reason}</span></span></div>`
+  ).join('');
+  body.innerHTML =
+    (pre.length ? `<p class="text-[9px] font-black text-slate-400 uppercase mt-1">Dropped before AI (${pre.length})</p>${row('✕', 'text-amber-600', pre)}` : '') +
+    (post.length ? `<p class="text-[9px] font-black text-slate-400 uppercase mt-2">Filtered after AI (${post.length})</p>${row('✕', 'text-rose-500', post)}` : '');
+}
+
 function setLoading(on) {
   document.getElementById('search-btn').disabled = on;
   document.getElementById('search-icon').classList.toggle('hidden', on);
@@ -1293,6 +1317,7 @@ async function handleSearch(e) {
     document.getElementById('results-controls').classList.remove('hidden');
     updateExchangeRateBadge(results);
     renderMap(results);
+    showFilterDiag();
   } catch(err) {
     setStep(2,'err', err.message.slice(0,40));
     document.getElementById('error-box').textContent = err.message;
@@ -1906,13 +1931,13 @@ let _mapVisible = true;
 let _gmapsKey = '';
 
 async function loadGoogleMapsApi() {
-  if (window.google && window.google.maps) return true;
+  if (window.google && window.google.maps && window.google.maps.Map) return true;
   if (!_gmapsKey) return false;
   return new Promise(resolve => {
     const s = document.createElement('script');
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${_gmapsKey}&libraries=maps,marker&loading=async`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${_gmapsKey}`;
     s.async = true;
-    s.onload  = () => resolve(true);
+    s.onload  = () => resolve(!!(window.google && window.google.maps && window.google.maps.Map));
     s.onerror = () => resolve(false);
     document.head.appendChild(s);
   });
