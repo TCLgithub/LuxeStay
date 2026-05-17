@@ -701,11 +701,24 @@ async function fetchRealHotels() {
       body: JSON.stringify({ city: locationQuery, textQuery: q, maxResults: state.maxResults || 12, ...nearBias })
     }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
 
-    const areaQuery = `hotels in ${locationQuery}`;
-    const diverseQuery = `${accomQuery} ${locationQuery}`;
-    const [batch1, batch2] = await Promise.all([call(areaQuery), call(diverseQuery)]);
+    // City-wide: 6 queries covering all directions + budget tier for full coverage
+    // When district specified: focus queries on that district/area
+    const queries = state.district ? [
+      `hotels in ${locationQuery}`,
+      `${accomQuery} near ${state.district} ${state.city}`,
+      `hotels ${state.city} ${state.district} area`,
+      `affordable ${accomQuery} ${locationQuery}`
+    ] : [
+      `hotels in ${state.city}`,
+      `hotels north ${state.city}`,
+      `hotels east ${state.city}`,
+      `hotels west ${state.city}`,
+      `hotels central downtown ${state.city}`,
+      `affordable ${accomQuery} ${state.city}`
+    ];
+    const batches = await Promise.all(queries.map(q => call(q)));
     const seen = new Set();
-    places = [...batch1, ...batch2].filter(p => {
+    places = batches.flat().filter(p => {
       if (!p.id || seen.has(p.id)) return false;
       seen.add(p.id); return true;
     });
