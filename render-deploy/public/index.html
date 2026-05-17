@@ -688,11 +688,23 @@ async function fetchRealHotels() {
   const locationQuery = [state.district, state.city].filter(Boolean).join(', ');
   const textQuery = `top rated ${accomQuery} in ${locationQuery}`;
 
+  let places = [];
+
   if (PROXY_MODE) {
-    r = await fetch('/api/places', {
+    // Two parallel calls: general + area-diverse (north/east), then merge by place ID
+    const call = (q) => fetch('/api/places', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ city: locationQuery, maxResults: state.maxResults || 12 })
+      body: JSON.stringify({ city: locationQuery, textQuery: q, maxResults: state.maxResults || 12 })
+    }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
+
+    const areaQuery = `hotels in ${locationQuery}`;
+    const diverseQuery = `${accomQuery} ${locationQuery}`;
+    const [batch1, batch2] = await Promise.all([call(areaQuery), call(diverseQuery)]);
+    const seen = new Set();
+    places = [...batch1, ...batch2].filter(p => {
+      if (!p.id || seen.has(p.id)) return false;
+      seen.add(p.id); return true;
     });
   } else {
     r = await fetch('https://places.googleapis.com/v1/places:searchText', {
@@ -708,15 +720,13 @@ async function fetchRealHotels() {
         maxResultCount: Math.min(state.maxResults || 12, 20)
       })
     });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Places API HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    places = data.places || [];
   }
-
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Places API HTTP ${r.status}`);
-  }
-
-  const data = await r.json();
-  const places = data.places || [];
   if (places.length === 0) throw new Error('No hotels found via Google Maps for this city');
 
   // Loose rating floor — AI prompt and client scoring enforce the user's minRating
