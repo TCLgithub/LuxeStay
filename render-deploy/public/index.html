@@ -253,7 +253,7 @@
           </div>
           <div class="relative">
             <span class="absolute left-3 top-2.5 text-[8px] font-black text-slate-300">MAX</span>
-            <input type="number" id="max-price" value="1500" class="w-full pl-8 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] font-black outline-none focus:border-blue-500"/>
+            <input type="number" id="max-price" value="1000" class="w-full pl-8 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] font-black outline-none focus:border-blue-500"/>
           </div>
         </div>
       </div>
@@ -1317,12 +1317,12 @@ async function handleSearch(e) {
     document.getElementById('results-controls').classList.remove('hidden');
     updateExchangeRateBadge(results);
     renderMap(results);
-    showFilterDiag();
   } catch(err) {
     setStep(2,'err', err.message.slice(0,40));
     document.getElementById('error-box').textContent = err.message;
     document.getElementById('error-box').classList.remove('hidden');
   } finally {
+    showFilterDiag();
     setLoading(false);
     setSearchStatus('Perform AI Scan');
   }
@@ -2270,7 +2270,7 @@ function loadSearch(id) {
   document.getElementById('mrt-distance').value    = p.maxMRTWalk || 'any';
   document.getElementById('min-rating').value      = p.minRating || 4.5;
   document.getElementById('min-price').value       = p.minPrice || 500;
-  document.getElementById('max-price').value       = p.maxPrice || 1500;
+  document.getElementById('max-price').value       = p.maxPrice || 1000;
   document.getElementById('max-results').value     = p.maxResults || 12;
   document.getElementById('currency-select').value = p.currency || 'MYR';
   document.getElementById('min-radius').value      = p.minKm || 0;
