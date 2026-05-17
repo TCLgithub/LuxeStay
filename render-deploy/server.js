@@ -10,49 +10,38 @@ app.post('/api/places', async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY || '';
   if (!key) return res.status(503).json({ error: 'GOOGLE_PLACES_API_KEY not configured' });
 
-  const { city, maxResults = 15 } = req.body;
+  const { city, maxResults = 15, textQuery: customQuery } = req.body;
 
-  // Try with reviews first (Advanced billing SKU), fall back without if denied
-  const fieldMasks = [
-    'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.reviews,places.websiteUri,places.formattedAddress,places.location',
-    'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.websiteUri,places.formattedAddress,places.location'
-  ];
+  const fieldMask = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.reviews,places.websiteUri,places.formattedAddress,places.location';
+  const fieldMaskNoReviews = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.websiteUri,places.formattedAddress,places.location';
 
-  for (const fieldMask of fieldMasks) {
-    try {
-      const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
-        method: 'POST',
-        headers: {
-          'X-Goog-Api-Key': key,
-          'X-Goog-FieldMask': fieldMask,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          textQuery: `top rated hotels resorts in ${city}`,
-          includedType: 'lodging',
-          maxResultCount: Math.min(maxResults, 20),
-          rankPreference: 'RELEVANCE'
-        })
-      });
-
-      const data = await r.json();
-
-      // If billing/permission error on reviews, retry without
-      if (!r.ok) {
-        const code = data.error?.status;
-        if ((code === 'PERMISSION_DENIED' || code === 'RESOURCE_EXHAUSTED') && fieldMask.includes('reviews')) {
-          continue; // retry without reviews
-        }
-        return res.status(r.status).json({ error: data.error?.message || 'Places API error' });
+  async function searchPlaces(textQuery, mask) {
+    const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': mask, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ textQuery, includedType: 'lodging', maxResultCount: 20, rankPreference: 'RELEVANCE' })
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      const code = data.error?.status;
+      if ((code === 'PERMISSION_DENIED' || code === 'RESOURCE_EXHAUSTED') && mask.includes('reviews')) {
+        return searchPlaces(textQuery, fieldMaskNoReviews);
       }
-
-      return res.json(data);
-    } catch (e) {
-      return res.status(502).json({ error: 'Google Places upstream error', detail: e.message });
+      throw new Error(data.error?.message || `Places API error ${r.status}`);
     }
+    return data.places || [];
   }
 
-  res.status(502).json({ error: 'Google Places: all field mask attempts failed' });
+  try {
+    const query = customQuery || `hotels in ${city}`;
+    const places = await searchPlaces(query, fieldMask);
+    // Deduplicate by place ID (in case caller sends overlapping queries via two requests)
+    const seen = new Set();
+    const unique = places.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+    return res.json({ places: unique });
+  } catch (e) {
+    return res.status(502).json({ error: 'Google Places upstream error', detail: e.message });
+  }
 });
 
 // ── Anthropic / Claude ──────────────────────────────────────────────────────
@@ -124,6 +113,31 @@ app.post('/api/openai', async (req, res) => {
     res.status(r.status).json(data);
   } catch (e) {
     res.status(502).json({ error: 'Upstream error', detail: e.message });
+  }
+});
+
+// ── Config (exposes non-secret browser keys) ────────────────────────────────
+app.get('/api/config', (req, res) => {
+  res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '' });
+});
+
+// ── Google Geocoding ────────────────────────────────────────────────────────
+app.get('/api/geocode', async (req, res) => {
+  const key = process.env.GOOGLE_MAPS_API_KEY || '';
+  if (!key) return res.status(503).json({ error: 'GOOGLE_MAPS_API_KEY not configured' });
+  const address = req.query.q || '';
+  try {
+    const r = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${key}`
+    );
+    const data = await r.json();
+    if (data.results && data.results[0]) {
+      const loc = data.results[0].geometry.location;
+      return res.json({ lat: loc.lat, lng: loc.lng });
+    }
+    res.json({});
+  } catch (e) {
+    res.status(502).json({ error: e.message });
   }
 });
 
