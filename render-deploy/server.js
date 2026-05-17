@@ -10,7 +10,7 @@ app.post('/api/places', async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY || '';
   if (!key) return res.status(503).json({ error: 'GOOGLE_PLACES_API_KEY not configured' });
 
-  const { city, maxResults = 15, textQuery: customQuery, nearLat, nearLng, maxKm } = req.body;
+  const { city, maxResults = 15, textQuery: customQuery, nearLat, nearLng, minKm, maxKm } = req.body;
 
   const fieldMask = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.reviews,places.websiteUri,places.formattedAddress,places.location';
   const fieldMaskNoReviews = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.websiteUri,places.formattedAddress,places.location';
@@ -38,30 +38,49 @@ app.post('/api/places', async (req, res) => {
     return data.places || [];
   }
 
-  // Nearby Search: purely geographic, guaranteed to return hotels within radius
-  // This catches hotels like Oasia Novena that text search misses due to popularity bias
-  async function searchNearby(mask) {
-    if (!geoCircle) return [];
-    try {
-      const r = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
-        method: 'POST',
-        headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': mask, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          includedTypes: ['lodging'],
-          maxResultCount: 20,
-          locationRestriction: geoCircle
-        })
-      });
-      const data = await r.json();
-      return r.ok ? (data.places || []) : [];
-    } catch { return []; }
+  // Directional Nearby Searches: centered at midpoint of distance band in N/S/E/W directions.
+  // Each call returns 20 hotels nearest that offset center → catches hotels like Oasia Novena
+  // that don't rank in top-20 from the reference point itself.
+  async function searchNearbyDirectional(mask) {
+    if (!nearLat || !nearLng) return [];
+    const minK = minKm || 0;
+    const maxK = maxKm || 20;
+    const midKm = (minK + maxK) / 2;
+    const searchRadius = Math.max((maxK - minK) * 600 + 2000, 4000); // band half-width + buffer
+
+    const dLat = midKm / 111.32;
+    const dLng = midKm / (111.32 * Math.cos(nearLat * Math.PI / 180));
+
+    const centers = [
+      { latitude: nearLat + dLat, longitude: nearLng },  // North
+      { latitude: nearLat - dLat, longitude: nearLng },  // South
+      { latitude: nearLat, longitude: nearLng + dLng },  // East
+      { latitude: nearLat, longitude: nearLng - dLng },  // West
+    ];
+
+    const results = await Promise.all(centers.map(async center => {
+      try {
+        const r = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+          method: 'POST',
+          headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': mask, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            includedTypes: ['lodging'],
+            maxResultCount: 20,
+            locationRestriction: { circle: { center, radius: searchRadius } }
+          })
+        });
+        const data = await r.json();
+        return r.ok ? (data.places || []) : [];
+      } catch { return []; }
+    }));
+    return results.flat();
   }
 
   try {
     const query = customQuery || `hotels in ${city}`;
     const [textPlaces, nearbyPlaces] = await Promise.all([
       searchPlaces(query, fieldMask),
-      searchNearby(fieldMaskNoReviews)
+      searchNearbyDirectional(fieldMaskNoReviews)
     ]);
     const seen = new Set();
     const unique = [...textPlaces, ...nearbyPlaces].filter(p => {
