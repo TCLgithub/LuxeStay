@@ -777,9 +777,18 @@ function buildPromptWithRealData(hotels) {
   const preferred = state.preferredHotel
     ? `Also include: "${state.preferredHotel}" if not already listed.` : '';
 
-  // Cap at maxResults+4 (sorted by rating) to keep prompt size manageable
-  const cap = Math.min(hotels.length, (state.maxResults || 12) + 4);
-  const topHotels = [...hotels].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, cap);
+  // Pre-filter before AI: drop hotels that will definitely fail client-side filters
+  const eligible = hotels.filter(h => {
+    if ((h.rating || 0) < state.minRating) return false;
+    if (_nearLat && _nearLng && h.lat && h.lng && state.nearLocation) {
+      const dist = haversineKm(_nearLat, _nearLng, h.lat, h.lng);
+      if (dist < state.minKm || dist > state.maxKm) return false;
+    }
+    return true;
+  });
+
+  const cap = Math.min(eligible.length, (state.maxResults || 12) + 8);
+  const topHotels = [...eligible].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, cap);
 
   const hotelContext = topHotels.map((h, i) => {
     const revText = h.reviews.length
@@ -828,24 +837,24 @@ EXCHANGE RATE (CRITICAL — do NOT invert):
 Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 (Key rates: SGD=3.40, USD=4.48, TWD=0.142, THB=0.131, JPY=0.030, EUR=4.87, GBP=5.65, IDR=0.0000285, HKD=0.574, KRW=0.0033, AUD=2.84, CNY=0.618)
 
-1. ROOM TYPES (minimum 3 categories per hotel): Standard/Deluxe/Suite tiers. Use realistic market rates visible on Booking.com/Agoda for ${state.city} around ${state.checkIn}.
+1. ROOM TYPES (2–3 tiers per hotel: Standard/Deluxe/Suite). Realistic market rates from Booking.com/Agoda for ${state.city} around ${state.checkIn}.
    Price in ${state.currency}/night on: Official site, Booking.com, Agoda, Trip.com, Expedia
-   ➜ BUDGET FILTER: Only include hotels where ≥1 room costs ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night (= ${state.minPrice}–${state.maxPrice} MYR/night). EXCLUDE luxury hotels above this range.
    ➜ exchangeRateToMYR: must be ~${KNOWN_RATES[state.currency]||1} (1 ${state.currency} in MYR)
+   ➜ Budget context (for pricing reference): ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. Analyse ALL hotels listed — the app will apply budget filtering automatically.
 
-2. QUALITATIVE ANALYSIS (use real review snippets as evidence — rate 1–5 with 1-sentence summary):
+2. QUALITATIVE RATINGS (rate 1.0–5.0, one decimal, based on reviews — NO summary text needed):
    staffFriendliness | overallCondition | cleanliness | transitProximity | acPerformance
    noiseLevel | soundproofing | roomComfort | bathroomCondition | maintenanceQuality
 
-3. PROS (3–4): Specific positives extracted directly from the real reviews above.
-4. CONS (2–3): Specific negatives extracted directly from the real reviews above.
-5. PROFILE RECOMMENDATIONS: Tailored advice for Business, Family, Budget, Light Sleeper.
-6. PROXIMITY: Exact or estimated distance to nearest MRT/metro station (name it), airport, beach.
-7. PARKING: Whether car park is typically available.
-8. BOOKING LINKS: Realistic URLs for booking.com, agoda, trip.com, hotels.com, expedia, tripadvisor.
+3. PROS (2–3 bullet points from real reviews).
+4. CONS (1–2 bullet points from real reviews).
+5. PROFILE RECOMMENDATIONS: One sentence each for Business, Family, Budget, Light Sleeper.
+6. PROXIMITY: Distance to nearest MRT/metro (name it), airport, beach.
+7. PARKING: Car park available yes/no.
+8. BOOKING LINKS: URLs for booking.com, agoda, trip.com, hotels.com, expedia, tripadvisor.
 
-IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from the real data above.
-Return up to ${state.maxResults || 12} best properties. Prices are estimates to guide research — users will verify and book on the actual platforms.
+IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from real data above.
+Analyse ALL ${topHotels.length} hotels and return results for every one. Prices are estimates for research.
 
 Return ONLY a valid JSON array (no markdown, no explanation):
 [{
@@ -857,7 +866,7 @@ Return ONLY a valid JSON array (no markdown, no explanation):
   "carParkAvailable": boolean,
   "exchangeRateToMYR": number,
   "roomTypes": [{"type":string,"sizeM2":string,"breakfastIncluded":boolean,"cancellationPolicy":string,"prices":{"official":number,"booking":number,"agoda":number,"trip":number,"expedia":number}}],
-  "reviewMetrics": {"staffFriendliness":{"rating":number,"summary":string},"overallCondition":{"rating":number,"summary":string},"cleanliness":{"rating":number,"summary":string},"transitProximity":{"rating":number,"summary":string},"acPerformance":{"rating":number,"summary":string},"noiseLevel":{"rating":number,"summary":string},"soundproofing":{"rating":number,"summary":string},"roomComfort":{"rating":number,"summary":string},"bathroomCondition":{"rating":number,"summary":string},"maintenanceQuality":{"rating":number,"summary":string}},
+  "reviewMetrics": {"staffFriendliness":{"rating":number},"overallCondition":{"rating":number},"cleanliness":{"rating":number},"transitProximity":{"rating":number},"acPerformance":{"rating":number},"noiseLevel":{"rating":number},"soundproofing":{"rating":number},"roomComfort":{"rating":number},"bathroomCondition":{"rating":number},"maintenanceQuality":{"rating":number}},
   "profileRecommendations": {"business":string,"family":string,"budget":string,"lightSleeper":string},
   "proximity": {"mrt":string,"beach":string,"airport":string},
   "pros": [string],
