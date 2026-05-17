@@ -1066,8 +1066,14 @@ function filterAndScore(data) {
       Object.entries(coordMap).find(([k]) => key.includes(k) || k.includes(key))?.[1] ||
       null;
 
+    const seenTypes = new Set();
     const roomTypes = (h.roomTypes||[])
-      .filter(r => Object.values(r.prices||{}).some(p=>p>0))
+      .filter(r => {
+        const key = (r.type||'').toLowerCase().trim();
+        if (seenTypes.has(key)) return false;
+        seenTypes.add(key);
+        return Object.values(r.prices||{}).some(p=>p>0);
+      })
       .map(r => {
         const prices = Object.values(r.prices||{}).filter(p=>p>0);
         const bestMYR = prices.length ? Math.min(...prices) * validRate : 0;
@@ -1970,13 +1976,15 @@ async function renderMap(hotels) {
   // Try Google Maps
   const mapsReady = await loadGoogleMapsApi();
   if (!mapsReady) {
-    // No Google Maps key — show fallback list with Google Maps links
     const provider = mapProviderLabel();
+    const mapMsg = _gmapsKey
+      ? 'Google Maps script blocked — check API key restrictions in Google Cloud Console (remove IP/referrer limits for the Maps JS API key, or hard-refresh with Ctrl+Shift+R).'
+      : 'Set <b>GOOGLE_MAPS_API_KEY</b> in Render → Environment Variables, then redeploy.';
     document.getElementById('hotel-map').style.height = 'auto';
     document.getElementById('hotel-map').innerHTML = `
       <div style="padding:16px 24px;background:#fefce8;border-bottom:1px solid #fde68a">
-        <p style="font-size:11px;font-weight:900;color:#92400e;margin-bottom:4px">Google Maps key not configured</p>
-        <p style="font-size:10px;color:#a16207">Set <b>GOOGLE_MAPS_API_KEY</b> (for map + geocoding) and <b>GOOGLE_PLACES_API_KEY</b> (for hotel search) in Render → Environment Variables.</p>
+        <p style="font-size:11px;font-weight:900;color:#92400e;margin-bottom:4px">${_gmapsKey ? 'Google Maps failed to load' : 'Google Maps key not configured'}</p>
+        <p style="font-size:10px;color:#a16207">${mapMsg}</p>
       </div>
       <div style="padding:16px 24px;background:#f8fafc">
         ${hotelsWithCoords.slice(0,10).map((h,i) => `
