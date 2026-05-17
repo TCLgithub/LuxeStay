@@ -684,11 +684,8 @@ async function fetchRealHotels() {
   const accomQuery = state.accommodationTypes.length
     ? state.accommodationTypes.join(' or ')
     : 'hotel resort';
-  const locationQuery = [
-    state.nearLocation || '',
-    state.district || '',
-    state.city
-  ].filter(Boolean).join(', ');
+  // Search in city/district only — nearLocation is for distance filtering, not the search area
+  const locationQuery = [state.district, state.city].filter(Boolean).join(', ');
   const textQuery = `top rated ${accomQuery} in ${locationQuery}`;
 
   if (PROXY_MODE) {
