@@ -870,8 +870,7 @@ Return ONLY a valid JSON array (no markdown, no explanation):
   "profileRecommendations": {"business":string,"family":string,"budget":string,"lightSleeper":string},
   "proximity": {"mrt":string,"beach":string,"airport":string},
   "pros": [string],
-  "cons": [string],
-  "links": {"booking":string,"agoda":string,"trip":string,"hotels":string,"expedia":string,"tripadvisor":string}
+  "cons": [string]
 }]`;
 }
 
@@ -2041,20 +2040,20 @@ async function renderMap(hotels) {
   // Google Maps is ready — render interactive map
   clearGoogleMap();
 
-  if (!_gmap) {
-    _ginfoWindow = new google.maps.InfoWindow();
-    _gmap = new google.maps.Map(document.getElementById('hotel-map'), {
-      center: { lat: avgLat, lng: avgLng },
-      zoom: 13,
-      mapTypeControl: false,
-      streetViewControl: false,
-      fullscreenControl: true,
-      zoomControl: true
-    });
-  } else {
-    _gmap.setCenter({ lat: avgLat, lng: avgLng });
-    _gmap.setZoom(13);
-  }
+  // Always create a fresh map instance — previous fallback renders destroy the div's inner DOM
+  document.getElementById('hotel-map').style.height = '440px';
+  document.getElementById('hotel-map').innerHTML = '';
+  _gmap = null;
+
+  _ginfoWindow = new google.maps.InfoWindow();
+  _gmap = new google.maps.Map(document.getElementById('hotel-map'), {
+    center: { lat: avgLat, lng: avgLng },
+    zoom: 13,
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: true,
+    zoomControl: true
+  });
 
   // Draw radius circle if a reference location is set
   if (state.nearLocation) {
