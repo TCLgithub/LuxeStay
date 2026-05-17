@@ -702,7 +702,7 @@ async function fetchRealHotels() {
   if (PROXY_MODE) {
     // Two parallel calls: general + area-diverse, then merge by place ID
     const nearBias = (_nearLat && _nearLng && state.nearLocation)
-      ? { nearLat: _nearLat, nearLng: _nearLng, maxKm: state.maxKm }
+      ? { nearLat: _nearLat, nearLng: _nearLng, minKm: state.minKm, maxKm: state.maxKm }
       : {};
     const call = (q) => fetch('/api/places', {
       method: 'POST',
