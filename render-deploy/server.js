@@ -15,16 +15,13 @@ app.post('/api/places', async (req, res) => {
   const fieldMask = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.reviews,places.websiteUri,places.formattedAddress,places.location';
   const fieldMaskNoReviews = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.websiteUri,places.formattedAddress,places.location';
 
-  // When reference coords available: use locationRestriction (hard boundary) so Places
-  // returns hotels within the geographic circle, not just globally popular ones.
-  // Without coords: fall back to locationBias on city centre.
   const geoCircle = (nearLat && nearLng)
     ? { circle: { center: { latitude: nearLat, longitude: nearLng }, radius: (maxKm || 20) * 1000 } }
     : undefined;
 
   async function searchPlaces(textQuery, mask) {
     const body = { textQuery, includedType: 'lodging', maxResultCount: 20, rankPreference: 'RELEVANCE' };
-    if (geoCircle) body.locationRestriction = geoCircle;  // hard boundary → geographic diversity
+    if (geoCircle) body.locationBias = geoCircle;
     const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
       method: 'POST',
       headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': mask, 'Content-Type': 'application/json' },
@@ -41,12 +38,36 @@ app.post('/api/places', async (req, res) => {
     return data.places || [];
   }
 
+  // Nearby Search: purely geographic, guaranteed to return hotels within radius
+  // This catches hotels like Oasia Novena that text search misses due to popularity bias
+  async function searchNearby(mask) {
+    if (!geoCircle) return [];
+    try {
+      const r = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+        method: 'POST',
+        headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': mask, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          includedTypes: ['lodging'],
+          maxResultCount: 20,
+          locationRestriction: geoCircle
+        })
+      });
+      const data = await r.json();
+      return r.ok ? (data.places || []) : [];
+    } catch { return []; }
+  }
+
   try {
     const query = customQuery || `hotels in ${city}`;
-    const places = await searchPlaces(query, fieldMask);
-    // Deduplicate by place ID (in case caller sends overlapping queries via two requests)
+    const [textPlaces, nearbyPlaces] = await Promise.all([
+      searchPlaces(query, fieldMask),
+      searchNearby(fieldMaskNoReviews)
+    ]);
     const seen = new Set();
-    const unique = places.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+    const unique = [...textPlaces, ...nearbyPlaces].filter(p => {
+      if (!p.id || seen.has(p.id)) return false;
+      seen.add(p.id); return true;
+    });
     return res.json({ places: unique });
   } catch (e) {
     return res.status(502).json({ error: 'Google Places upstream error', detail: e.message });
