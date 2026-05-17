@@ -399,7 +399,7 @@
 // ═══════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════
-const PROVIDERS = ['gemini','deepseek','anthropic','openai'];
+const PROVIDERS = ['gemini','anthropic','deepseek','openai'];
 const P_LABELS  = { gemini:'Gemini 2.0', deepseek:'DeepSeek', anthropic:'Claude Haiku', openai:'GPT-4o Mini' };
 const DEFAULT_MODELS = {
   gemini:    'gemini-2.0-flash',
@@ -691,11 +691,14 @@ async function fetchRealHotels() {
   let places = [];
 
   if (PROXY_MODE) {
-    // Two parallel calls: general + area-diverse (north/east), then merge by place ID
+    // Two parallel calls: general + area-diverse, then merge by place ID
+    const nearBias = (_nearLat && _nearLng && state.nearLocation)
+      ? { nearLat: _nearLat, nearLng: _nearLng, maxKm: state.maxKm }
+      : {};
     const call = (q) => fetch('/api/places', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ city: locationQuery, textQuery: q, maxResults: state.maxResults || 12 })
+      body: JSON.stringify({ city: locationQuery, textQuery: q, maxResults: state.maxResults || 12, ...nearBias })
     }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
 
     const areaQuery = `hotels in ${locationQuery}`;
