@@ -719,21 +719,29 @@ async function fetchRealHotels() {
   const places = data.places || [];
   if (places.length === 0) throw new Error('No hotels found via Google Maps for this city');
 
-  return places
-    .filter(p => (p.rating || 0) >= state.minRating)
-    .map(p => ({
-      name:        p.displayName?.text || 'Unknown Hotel',
-      rating:      p.rating || 0,
-      reviewCount: p.userRatingCount || 0,
-      priceLevel:  p.priceLevel || '',
-      website:     p.websiteUri || '',
-      address:     p.formattedAddress || '',
-      lat:         p.location?.latitude  || null,
-      lng:         p.location?.longitude || null,
-      reviews:     (p.reviews || [])
-        .map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0, 300) }))
-        .filter(rv => rv.text)
-    }));
+  // Loose rating floor — AI prompt and client scoring enforce the user's minRating
+  // Also exclude the reference landmark itself (e.g. Marina Bay Sands when used as nearLocation)
+  const refName = (state.nearLocation || '').toLowerCase().split(' ').slice(0, 2).join(' ');
+  const filtered = places.filter(p => {
+    if ((p.rating || 0) < Math.min(state.minRating, 3.0)) return false;
+    if (refName && (p.displayName?.text || '').toLowerCase().includes(refName)) return false;
+    return true;
+  });
+  window._placesRawCount = places.length;
+
+  return filtered.map(p => ({
+    name:        p.displayName?.text || 'Unknown Hotel',
+    rating:      p.rating || 0,
+    reviewCount: p.userRatingCount || 0,
+    priceLevel:  p.priceLevel || '',
+    website:     p.websiteUri || '',
+    address:     p.formattedAddress || '',
+    lat:         p.location?.latitude  || null,
+    lng:         p.location?.longitude || null,
+    reviews:     (p.reviews || [])
+      .map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0, 300) }))
+      .filter(rv => rv.text)
+  }));
 }
 
 // ═══════════════════════════════════════════════════
@@ -758,7 +766,7 @@ ${revText}`;
     ? `PRIORITY: Only include properties within ${state.maxMRTWalk === 'walk' ? 'walking distance' : state.maxMRTWalk + ' walk'} of MRT/metro/public transport.`
     : '';
   const distNote = state.nearLocation
-    ? `Distance from ${state.nearLocation}: ${state.minKm}–${state.maxKm} km`
+    ? `DISTANCE FILTER (strictly enforced): Only hotels ${state.minKm}–${state.maxKm}km from ${state.nearLocation}. Hotels within ${state.minKm}km (incl. ${state.nearLocation} itself) will be excluded.`
     : '';
   const locationNote = [
     state.district ? `District/Area: ${state.district}` : '',
@@ -839,6 +847,7 @@ Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5
 ${mrtNote}
 
 CRITICAL: Top ${state.maxResults || 12} properties by review volume. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
+${state.nearLocation && (state.minKm > 0 || state.maxKm < 50) ? `DISTANCE: Only include hotels ${state.minKm}–${state.maxKm}km from ${state.nearLocation}. Do NOT include ${state.nearLocation} itself. Focus on neighbourhoods at that distance.` : ''}
 
 EXCHANGE RATE (do NOT invert): "exchangeRateToMYR" = how many MYR for 1 ${state.currency}. Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR.
 
@@ -1179,7 +1188,11 @@ async function handleSearch(e) {
     setSearchStatus('Fetching real hotels from Google Maps…');
     const hotels = await fetchRealHotels();
     lastRealHotels = hotels;
-    setStep(1,'done', `${hotels.length} real hotels found`);
+    const rawCount = window._placesRawCount || hotels.length;
+    const stepMsg = rawCount === hotels.length
+      ? `${hotels.length} hotels from Google Maps`
+      : `${hotels.length} hotels (${rawCount} from Places, filtered by rating)`;
+    setStep(1,'done', stepMsg);
     toast(`✓ Google Maps: ${hotels.length} hotels found`, 2500);
     prompt = buildPromptWithRealData(hotels);
   } catch(err) {
@@ -1541,71 +1554,80 @@ function renderRoomCatalog(hotels) {
 
 function renderQualitativeView(hotels) {
   const metrics = [
-    {key:'staffFriendliness', label:'Staff Friendliness'},
-    {key:'overallCondition',  label:'Condition & Modernity'},
-    {key:'cleanliness',       label:'Sanitation Quality'},
-    {key:'transitProximity',  label:'MRT Access'},
-    {key:'acPerformance',     label:'Air Con Efficiency'},
-    {key:'noiseLevel',        label:'Ambient Quietness'},
-    {key:'soundproofing',     label:'Soundproofing'},
-    {key:'roomComfort',       label:'Sleep Comfort'},
-    {key:'bathroomCondition', label:'Bathroom Quality'},
-    {key:'maintenanceQuality',label:'Maintenance Level'}
+    {key:'staffFriendliness', label:'Staff'},
+    {key:'overallCondition',  label:'Condition'},
+    {key:'cleanliness',       label:'Cleanliness'},
+    {key:'transitProximity',  label:'Transit'},
+    {key:'acPerformance',     label:'A/C'},
+    {key:'noiseLevel',        label:'Noise'},
+    {key:'soundproofing',     label:'Soundproof'},
+    {key:'roomComfort',       label:'Comfort'},
+    {key:'bathroomCondition', label:'Bathroom'},
+    {key:'maintenanceQuality',label:'Maint.'}
   ];
-  const cols = hotels.slice(0,10).map(h => `
-    <th class="px-8 py-12 text-center font-black text-white uppercase tracking-tight border-l border-slate-800/50 min-w-[250px] text-[12px]">
-      <div class="line-clamp-2 leading-tight">${h.name}</div>
-      <div class="flex items-center justify-center gap-1 mt-2">
-        <span class="text-amber-400 text-sm font-black">${h.guestRating}</span>
-        <span class="text-slate-500 text-[9px]">/ 5</span>
-        ${lastRealHotels?'<span class="badge-real ml-1" style="font-size:8px">Real</span>':''}
-      </div>
-    </th>`).join('');
 
-  const mrows = metrics.map(m => {
-    const cells = hotels.slice(0,10).map(h => {
-      const md = (h.reviewMetrics||{})[m.key] || {rating:0,summary:'N/A'};
-      const fill = (md.rating/5)*100;
-      const dots = [1,2,3,4,5].map(b=>`<div class="w-3 h-3 rounded-full ${b<=Math.round(md.rating)?'bg-blue-600':'bg-slate-200'}"></div>`).join('');
-      return `<td class="px-8 py-10 border-l border-slate-100 bg-white">
-        <div class="space-y-5">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-1.5">${dots}</div>
-            <span class="text-3xl font-black text-slate-900">${md.rating.toFixed(1)}</span>
-          </div>
-          <div class="w-full h-5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50 shadow-inner">
-            <div class="h-full bg-gradient-to-r ${sentimentGradient(md.rating)} rounded-full" style="width:${fill}%"></div>
-          </div>
-          <p class="text-[13px] font-bold text-slate-600 leading-relaxed bg-slate-50 p-5 rounded-[28px] border border-slate-100 min-h-[100px] italic">"${md.summary}"</p>
-        </div>
+  function ratingCell(r) {
+    if (!r) return {bg:'#e2e8f0', fg:'#94a3b8'};
+    if (r >= 4.5) return {bg:'#15803d', fg:'#ffffff'};
+    if (r >= 4.0) return {bg:'#22c55e', fg:'#ffffff'};
+    if (r >= 3.5) return {bg:'#86efac', fg:'#166534'};
+    if (r >= 3.0) return {bg:'#fbbf24', fg:'#78350f'};
+    if (r >= 2.0) return {bg:'#f97316', fg:'#ffffff'};
+    return {bg:'#ef4444', fg:'#ffffff'};
+  }
+
+  const list = hotels.slice(0, 10);
+
+  const headerCols = metrics.map(m =>
+    `<th style="padding:6px 4px;text-align:center;font-size:10px;font-weight:700;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;white-space:nowrap;min-width:68px">${m.label}</th>`
+  ).join('');
+
+  const rows = list.map(h => {
+    const cells = metrics.map(m => {
+      const rating = (h.reviewMetrics||{})[m.key]?.rating || 0;
+      const {bg, fg} = ratingCell(rating);
+      const display = rating ? rating.toFixed(1) : '–';
+      return `<td style="padding:0;border:1px solid #e2e8f0;text-align:center">
+        <div style="background:${bg};color:${fg};font-size:13px;font-weight:800;height:38px;display:flex;align-items:center;justify-content:center;letter-spacing:-0.02em">${display}</div>
       </td>`;
     }).join('');
-    return `<tr class="hover:bg-blue-50/10 transition-all">
-      <td class="px-10 py-10 font-black text-slate-800 bg-slate-50 sticky left-0 z-10 border-r border-slate-200 text-lg shadow-[4px_0_12px_rgba(0,0,0,0.04)]">${m.label}</td>
+    const realBadge = lastRealHotels ? '<span class="badge-real" style="font-size:8px;margin-left:4px">Real</span>' : '';
+    return `<tr>
+      <td style="padding:6px 10px;border:1px solid #e2e8f0;background:#f8fafc;font-size:11px;font-weight:700;color:#1e293b;min-width:160px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        ${h.name}${realBadge}
+        <div style="font-size:10px;font-weight:600;color:#64748b;margin-top:1px">⭐ ${h.guestRating} &nbsp;|&nbsp; Score ${(h.compositeScore||0).toFixed(0)}</div>
+      </td>
       ${cells}
     </tr>`;
   }).join('');
 
-  return `<div class="space-y-8 fade-in">
-    <div class="flex items-center gap-4 bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm border-l-8 border-l-blue-600">
-      <svg class="w-8 h-8 text-blue-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/>
-      </svg>
-      <div>
-        <p class="text-base font-black text-slate-700 uppercase tracking-[0.1em]">Qualitative Sentiment Matrix — ${hotels.length} Properties</p>
-        ${lastRealHotels?'<p class="text-xs text-slate-400 mt-1">Analysis anchored to real Google Maps reviews</p>':''}
-      </div>
+  const legend = [
+    {bg:'#15803d',fg:'#fff',label:'≥ 4.5 Excellent'},
+    {bg:'#22c55e',fg:'#fff',label:'≥ 4.0 Good'},
+    {bg:'#86efac',fg:'#166534',label:'≥ 3.5 Fair'},
+    {bg:'#fbbf24',fg:'#78350f',label:'≥ 3.0 Average'},
+    {bg:'#f97316',fg:'#fff',label:'≥ 2.0 Poor'},
+    {bg:'#ef4444',fg:'#fff',label:'< 2.0 Bad'}
+  ].map(l => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:10px;font-weight:600;color:#475569">
+    <span style="background:${l.bg};color:${l.fg};padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700">${l.label.split(' ')[0]}</span>${l.label.split(' ').slice(1).join(' ')}
+  </span>`).join('');
+
+  return `<div class="space-y-4 fade-in">
+    <div class="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+      <p class="text-sm font-black text-slate-700 uppercase tracking-widest">Review Matrix — ${list.length} Properties</p>
+      ${lastRealHotels?'<span class="badge-real" style="font-size:9px">Real Reviews</span>':''}
     </div>
-    <div class="bg-white rounded-[40px] shadow-2xl border border-slate-200 overflow-hidden">
+    <div style="display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;background:#fff;border-radius:12px;border:1px solid #e2e8f0">${legend}</div>
+    <div class="bg-white rounded-2xl shadow border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
-        <table class="w-full border-collapse" style="min-width:1100px">
-          <thead class="bg-slate-900 border-b-2 border-slate-800">
+        <table style="border-collapse:collapse;width:100%">
+          <thead>
             <tr>
-              <th class="px-10 py-12 text-left font-black text-white uppercase tracking-[0.2em] sticky left-0 z-20 bg-slate-900 w-[260px] text-xl">Analysis Matrix</th>
-              ${cols}
+              <th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;min-width:160px">Hotel</th>
+              ${headerCols}
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">${mrows}</tbody>
+          <tbody>${rows}</tbody>
         </table>
       </div>
     </div>
