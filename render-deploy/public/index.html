@@ -1048,60 +1048,73 @@ function filterAndScore(data) {
       if (rh.lat && rh.lng) coordMap[rh.name.toLowerCase()] = { lat: rh.lat, lng: rh.lng };
     });
   }
-  return data
-    .map(h => {
-      // Validate & correct exchange rate with tight 35% threshold
-      // Catches inverted rates: e.g. AI returns 1.58 for SGD (correct is 3.40 — 53% off)
-      const aiRate = h.exchangeRateToMYR || knownRate;
-      const validRate = (knownRate > 0 && Math.abs(aiRate - knownRate) / knownRate > 0.35)
-        ? knownRate : aiRate;
 
-      const key = h.name.toLowerCase();
-      const coords = coordMap[key] ||
-        Object.entries(coordMap).find(([k]) => key.includes(k) || k.includes(key))?.[1] ||
-        null;
+  // Step 1: enrich each hotel with validated rate, coords, distKm, budget tags
+  const mapped = data.map(h => {
+    const aiRate = h.exchangeRateToMYR || knownRate;
+    const validRate = (knownRate > 0 && Math.abs(aiRate - knownRate) / knownRate > 0.35)
+      ? knownRate : aiRate;
 
-      // Keep ALL room types; tag those outside budget for visual dim
-      const roomTypes = (h.roomTypes||[])
-        .filter(r => Object.values(r.prices||{}).some(p=>p>0))
-        .map(r => {
-          const prices = Object.values(r.prices||{}).filter(p=>p>0);
-          const bestMYR = prices.length ? Math.min(...prices) * validRate : 0;
-          return { ...r, _inBudget: !bestMYR || (bestMYR >= state.minPrice && bestMYR <= state.maxPrice) };
-        });
+    const key = h.name.toLowerCase();
+    const coords = coordMap[key] ||
+      Object.entries(coordMap).find(([k]) => key.includes(k) || k.includes(key))?.[1] ||
+      null;
 
-      // Compute distance from reference landmark if coordinates are available
-      const distKm = (_nearLat && coords?.lat && coords?.lng)
-        ? haversineKm(_nearLat, _nearLng, coords.lat, coords.lng)
-        : null;
+    const roomTypes = (h.roomTypes||[])
+      .filter(r => Object.values(r.prices||{}).some(p=>p>0))
+      .map(r => {
+        const prices = Object.values(r.prices||{}).filter(p=>p>0);
+        const bestMYR = prices.length ? Math.min(...prices) * validRate : 0;
+        return { ...r, _inBudget: !bestMYR || (bestMYR >= state.minPrice && bestMYR <= state.maxPrice) };
+      });
 
-      return {
-        ...h,
-        features: h.features || [],
-        exchangeRateToMYR: validRate,
-        lat: coords?.lat || null,
-        lng: coords?.lng || null,
-        distKm,
-        roomTypes
-      };
-    })
-    .filter(h => {
-      if (!h.roomTypes.length) return false;
+    const distKm = (_nearLat && coords?.lat && coords?.lng)
+      ? haversineKm(_nearLat, _nearLng, coords.lat, coords.lng)
+      : null;
 
-      // Distance filter — only applied when we have both the reference coords and hotel coords
-      const hasDistFilter = _nearLat && state.nearLocation && (state.minKm > 0 || state.maxKm < 50);
-      if (hasDistFilter && h.distKm !== null) {
-        if (h.distKm < state.minKm || h.distKm > state.maxKm) return false;
+    return {
+      ...h,
+      features: h.features || [],
+      exchangeRateToMYR: validRate,
+      lat: coords?.lat || null,
+      lng: coords?.lng || null,
+      distKm,
+      roomTypes,
+      _excluded: null
+    };
+  });
+
+  // Step 2: filter with diagnostics
+  const hasDistFilter = _nearLat && state.nearLocation && (state.minKm > 0 || state.maxKm < 50);
+  mapped.forEach(h => {
+    if (!h.roomTypes.length) { h._excluded = 'no room data'; return; }
+
+    if (hasDistFilter && h.distKm !== null) {
+      if (h.distKm < state.minKm || h.distKm > state.maxKm) {
+        h._excluded = `${h.distKm.toFixed(1)}km — outside ${state.minKm}–${state.maxKm}km range`;
+        return;
       }
+    }
 
-      // Budget filter: include if at least one room is within MYR range (20% tolerance above max)
-      const hasAffordableRoom = h.roomTypes.some(r => r._inBudget);
-      if (hasAffordableRoom) return true;
-      const allMYR = h.roomTypes.flatMap(r =>
-        Object.values(r.prices||{}).filter(p=>p>0).map(p => p * h.exchangeRateToMYR)
-      );
-      return allMYR.length > 0 && Math.min(...allMYR) <= state.maxPrice * 1.2;
-    })
+    const hasAffordableRoom = h.roomTypes.some(r => r._inBudget);
+    if (hasAffordableRoom) return; // passes
+
+    const allMYR = h.roomTypes.flatMap(r =>
+      Object.values(r.prices||{}).filter(p=>p>0).map(p => p * h.exchangeRateToMYR)
+    );
+    const cheapestMYR = allMYR.length ? Math.min(...allMYR) : 0;
+    if (cheapestMYR > 0 && cheapestMYR <= state.maxPrice * 1.2) return; // passes with tolerance
+
+    h._excluded = cheapestMYR
+      ? `RM${Math.round(cheapestMYR)}/night exceeds budget (1 ${state.currency} = RM${h.exchangeRateToMYR?.toFixed(2)})`
+      : 'no prices';
+  });
+
+  // Save diagnostics so the error message can explain what happened
+  window._filterDiag = mapped.map(h => ({ name: h.name, reason: h._excluded || 'OK' }));
+
+  return mapped
+    .filter(h => !h._excluded)
     .map(h => ({ ...h, compositeScore: calculateScore(h) }))
     .sort((a,b) => b.compositeScore - a.compositeScore);
 }
@@ -1182,7 +1195,15 @@ async function handleSearch(e) {
     setStep(2,'active','Running AI analysis…');
     const { data, provider, model } = await callWithFallback(prompt);
     results = filterAndScore(data);
-    if (results.length === 0) throw new Error('No hotels matched your budget. Try widening the MYR range.');
+    if (results.length === 0) {
+      const diag = (window._filterDiag || []);
+      const distExcluded = diag.filter(d => d.reason.includes('km —'));
+      const budgetExcluded = diag.filter(d => d.reason.includes('exceeds budget') || d.reason.includes('no prices'));
+      let msg = `No hotels passed filters (${diag.length} from AI).`;
+      if (distExcluded.length) msg += ` Distance excluded ${distExcluded.length}: ${distExcluded.slice(0,2).map(d=>`${d.name} (${d.reason})`).join('; ')}.`;
+      if (budgetExcluded.length) msg += ` Budget excluded ${budgetExcluded.length}: ${budgetExcluded.slice(0,2).map(d=>`${d.name} (${d.reason})`).join('; ')}.`;
+      throw new Error(msg);
+    }
     setStep(2,'done',`${results.length} hotels via ${P_LABELS[provider]}`);
     toast(`✓ ${results.length} properties analysed via ${P_LABELS[provider]}`, 3000);
 
