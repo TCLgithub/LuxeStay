@@ -777,12 +777,20 @@ function buildPromptWithRealData(hotels) {
   const preferred = state.preferredHotel
     ? `Also include: "${state.preferredHotel}" if not already listed.` : '';
 
-  // Pre-filter before AI: drop hotels that will definitely fail client-side filters
+  // Pre-filter before AI: drop hotels that definitely fail — use 0.3 tolerance on rating
+  // so borderline hotels aren't silently excluded (client filterAndScore enforces strictly)
+  window._preFilterDiag = [];
   const eligible = hotels.filter(h => {
-    if ((h.rating || 0) < state.minRating) return false;
+    if ((h.rating || 0) < state.minRating - 0.3) {
+      window._preFilterDiag.push({ name: h.name, reason: `rating ${h.rating} below min ${state.minRating}` });
+      return false;
+    }
     if (_nearLat && _nearLng && h.lat && h.lng && state.nearLocation) {
       const dist = haversineKm(_nearLat, _nearLng, h.lat, h.lng);
-      if (dist < state.minKm || dist > state.maxKm) return false;
+      if (dist < state.minKm || dist > state.maxKm) {
+        window._preFilterDiag.push({ name: h.name, reason: `${dist.toFixed(1)}km outside ${state.minKm}–${state.maxKm}km` });
+        return false;
+      }
     }
     return true;
   });
@@ -1139,6 +1147,11 @@ function filterAndScore(data) {
   mapped.forEach(h => {
     if (!h.roomTypes.length) { h._excluded = 'no room data'; return; }
 
+    if ((h.guestRating || 0) < state.minRating) {
+      h._excluded = `rating ${h.guestRating} below min ${state.minRating}`;
+      return;
+    }
+
     if (hasDistFilter && h.distKm !== null) {
       if (h.distKm < state.minKm || h.distKm > state.maxKm) {
         h._excluded = `${h.distKm.toFixed(1)}km — outside ${state.minKm}–${state.maxKm}km range`;
@@ -1251,11 +1264,15 @@ async function handleSearch(e) {
     results = filterAndScore(data);
     if (results.length === 0) {
       const diag = (window._filterDiag || []);
+      const preDiag = (window._preFilterDiag || []);
       const distExcluded = diag.filter(d => d.reason.includes('km —'));
       const budgetExcluded = diag.filter(d => d.reason.includes('exceeds budget') || d.reason.includes('no prices'));
-      let msg = `No hotels passed filters (${diag.length} from AI).`;
+      const ratingExcluded = diag.filter(d => d.reason.includes('rating'));
+      let msg = `No hotels passed filters (${diag.length} from AI, ${preDiag.length} dropped before AI).`;
+      if (preDiag.length) msg += ` Pre-AI: ${preDiag.slice(0,3).map(d=>`${d.name} (${d.reason})`).join('; ')}.`;
       if (distExcluded.length) msg += ` Distance excluded ${distExcluded.length}: ${distExcluded.slice(0,2).map(d=>`${d.name} (${d.reason})`).join('; ')}.`;
       if (budgetExcluded.length) msg += ` Budget excluded ${budgetExcluded.length}: ${budgetExcluded.slice(0,2).map(d=>`${d.name} (${d.reason})`).join('; ')}.`;
+      if (ratingExcluded.length) msg += ` Rating excluded ${ratingExcluded.length}: ${ratingExcluded.slice(0,2).map(d=>`${d.name} (${d.reason})`).join('; ')}.`;
       throw new Error(msg);
     }
     setStep(2,'done',`${results.length} hotels via ${P_LABELS[provider]}`);
