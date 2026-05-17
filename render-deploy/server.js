@@ -10,16 +10,25 @@ app.post('/api/places', async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY || '';
   if (!key) return res.status(503).json({ error: 'GOOGLE_PLACES_API_KEY not configured' });
 
-  const { city, maxResults = 15, textQuery: customQuery } = req.body;
+  const { city, maxResults = 15, textQuery: customQuery, nearLat, nearLng, maxKm } = req.body;
 
   const fieldMask = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.reviews,places.websiteUri,places.formattedAddress,places.location';
   const fieldMaskNoReviews = 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.websiteUri,places.formattedAddress,places.location';
 
+  // When reference coords available: use locationRestriction (hard boundary) so Places
+  // returns hotels within the geographic circle, not just globally popular ones.
+  // Without coords: fall back to locationBias on city centre.
+  const geoCircle = (nearLat && nearLng)
+    ? { circle: { center: { latitude: nearLat, longitude: nearLng }, radius: (maxKm || 20) * 1000 } }
+    : undefined;
+
   async function searchPlaces(textQuery, mask) {
+    const body = { textQuery, includedType: 'lodging', maxResultCount: 20, rankPreference: 'RELEVANCE' };
+    if (geoCircle) body.locationRestriction = geoCircle;  // hard boundary → geographic diversity
     const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
       method: 'POST',
       headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': mask, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ textQuery, includedType: 'lodging', maxResultCount: 20, rankPreference: 'RELEVANCE' })
+      body: JSON.stringify(body)
     });
     const data = await r.json();
     if (!r.ok) {
