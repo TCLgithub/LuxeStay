@@ -786,13 +786,22 @@ function buildPromptWithRealData(hotels) {
   const preferred = state.preferredHotel
     ? `Also include: "${state.preferredHotel}" if not already listed.` : '';
 
-  // Pre-filter before AI: drop hotels that definitely fail — use 0.3 tolerance on rating
-  // so borderline hotels aren't silently excluded (client filterAndScore enforces strictly)
+  // Approximate nightly rate (local currency) below which PRICE_LEVEL_VERY_EXPENSIVE is excluded
+  const VERY_EXP_FLOOR = { SGD:380, USD:280, MYR:1300, THB:11000, JPY:45000, EUR:280, GBP:240, HKD:2200, AUD:420, IDR:4200000, TWD:8500, KRW:370000, CNY:2000 };
+
   window._preFilterDiag = [];
   const eligible = hotels.filter(h => {
     if ((h.rating || 0) < state.minRating - 0.3) {
       window._preFilterDiag.push({ name: h.name, reason: `rating ${h.rating} below min ${state.minRating}` });
       return false;
+    }
+    if (h.priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE') {
+      const floor = VERY_EXP_FLOOR[state.currency] || 380;
+      const maxLocal = state.maxPrice / (KNOWN_RATES[state.currency] || 1);
+      if (maxLocal < floor) {
+        window._preFilterDiag.push({ name: h.name, reason: `luxury tier ($$$$) exceeds budget` });
+        return false;
+      }
     }
     if (_nearLat && _nearLng && h.lat && h.lng && state.nearLocation) {
       const dist = haversineKm(_nearLat, _nearLng, h.lat, h.lng);
@@ -811,8 +820,9 @@ function buildPromptWithRealData(hotels) {
     const revText = h.reviews.length
       ? h.reviews.slice(0, 3).map(rv => `       [${rv.rating}★] "${(rv.text||'').slice(0, 120)}"`).join('\n')
       : '       (No review snippets available)';
+    const tier = {PRICE_LEVEL_INEXPENSIVE:'$ Budget',PRICE_LEVEL_MODERATE:'$$ Mid-range',PRICE_LEVEL_EXPENSIVE:'$$$ Upscale',PRICE_LEVEL_VERY_EXPENSIVE:'$$$$ Luxury'}[h.priceLevel] || '';
     return `${i+1}. ${h.name}
-     Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews
+     Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews${tier ? ` | Price tier: ${tier}` : ''}
      Address: ${h.address}
      Real Guest Reviews:
 ${revText}`;
@@ -1175,7 +1185,7 @@ function filterAndScore(data) {
       Object.values(r.prices||{}).filter(p=>p>0).map(p => p * h.exchangeRateToMYR)
     );
     const cheapestMYR = allMYR.length ? Math.min(...allMYR) : 0;
-    if (cheapestMYR > 0 && cheapestMYR <= state.maxPrice * 1.2) return; // passes with tolerance
+    if (cheapestMYR > 0 && cheapestMYR <= state.maxPrice * 1.05) return; // 5% tolerance
 
     h._excluded = cheapestMYR
       ? `RM${Math.round(cheapestMYR)}/night exceeds budget (1 ${state.currency} = RM${h.exchangeRateToMYR?.toFixed(2)})`
