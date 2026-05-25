@@ -764,7 +764,26 @@ async function fetchRealHotels() {
   });
   window._placesRawCount = places.length;
 
-  return filtered.map(p => ({
+  // ── Inject preferred hotel if not already in results ──
+  if (state.preferredHotel && PROXY_MODE) {
+    const prefLower = state.preferredHotel.toLowerCase();
+    const alreadyIn = filtered.some(p => (p.displayName?.text || '').toLowerCase().includes(prefLower));
+    if (!alreadyIn) {
+      try {
+        const prefQuery = `${state.preferredHotel} ${state.city}`;
+        const prefRes = await fetch('/api/places', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ city: state.city, textQuery: prefQuery, maxResults: 5 })
+        }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
+        // Accept the first result whose name contains the preferred name keyword
+        const match = prefRes.find(p => (p.displayName?.text || '').toLowerCase().includes(prefLower));
+        if (match) filtered.push(match);
+      } catch(e) { /* silent — preferred hotel just won't have real data */ }
+    }
+  }
+
+  const mapPlace = p => ({
     name:        p.displayName?.text || 'Unknown Hotel',
     rating:      p.rating || 0,
     reviewCount: p.userRatingCount || 0,
@@ -776,7 +795,9 @@ async function fetchRealHotels() {
     reviews:     (p.reviews || [])
       .map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0, 300) }))
       .filter(rv => rv.text)
-  }));
+  });
+
+  return filtered.map(mapPlace);
 }
 
 // ═══════════════════════════════════════════════════
@@ -886,6 +907,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 
 IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from real data above.
 Analyse ALL ${topHotels.length} hotels and return results for every one. Prices are estimates for research.
+${state.preferredHotel ? `MANDATORY: "${state.preferredHotel}" marked ★PREFERRED above MUST appear in your JSON output. Do not omit it under any circumstances.` : ''}
 
 Return ONLY a valid JSON array (no markdown, no explanation):
 [{
