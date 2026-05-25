@@ -422,6 +422,34 @@ const KNOWN_RATES = {
   AUD:2.84, AED:1.22, INR:0.053, PHP:0.079, CNY:0.618, CAD:3.32,
   NZD:2.66, LKR:0.015, NPR:0.033
 };
+// Fetch live exchange rates (base MYR) — updates KNOWN_RATES in-place, cached 12 h
+async function fetchExchangeRates() {
+  const CACHE_KEY = 'ls_fx_cache';
+  const CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      Object.assign(KNOWN_RATES, cached.rates); return;
+    }
+  } catch(e) {}
+  try {
+    // open.er-api.com: free, no key, CORS-enabled. Base=MYR → rates = "1 MYR = X foreign"
+    // Invert to get "1 foreign = Y MYR"
+    const r = await fetch('https://open.er-api.com/v6/latest/MYR');
+    if (!r.ok) throw new Error('rate fetch failed');
+    const d = await r.json();
+    if (d.result !== 'success' || !d.rates) throw new Error('bad response');
+    const updated = {};
+    for (const [code, myrPerUnit] of Object.entries(KNOWN_RATES)) {
+      if (code === 'MYR') continue;
+      const myrFraction = d.rates[code]; // 1 MYR = X foreign
+      if (myrFraction && myrFraction > 0) updated[code] = 1 / myrFraction;
+    }
+    Object.assign(KNOWN_RATES, updated);
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), rates: updated }));
+  } catch(e) { /* silent — fall back to hardcoded rates */ }
+}
+
 const CURRENCIES = [
   {code:'MYR',symbol:'RM'}, {code:'USD',symbol:'$'},   {code:'TWD',symbol:'NT$'},
   {code:'SGD',symbol:'S$'}, {code:'EUR',symbol:'€'},   {code:'THB',symbol:'฿'},
@@ -841,6 +869,15 @@ function buildPromptWithRealData(hotels) {
   const cap = Math.min(eligible.length, (state.maxResults || 12) + 8);
   const topHotels = [...eligible].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, cap);
 
+  // Always include preferred hotel even if it fell outside the cap (lower rating)
+  if (_prefLower) {
+    const prefInTop = topHotels.some(h => h.name.toLowerCase().includes(_prefLower));
+    if (!prefInTop) {
+      const prefHotel = eligible.find(h => h.name.toLowerCase().includes(_prefLower));
+      if (prefHotel) topHotels.push(prefHotel);
+    }
+  }
+
   const hotelContext = topHotels.map((h, i) => {
     const revText = h.reviews.length
       ? h.reviews.slice(0, 3).map(rv => `       [${rv.rating}★] "${(rv.text||'').slice(0, 120)}"`).join('\n')
@@ -888,7 +925,7 @@ ${mrtNote}
 EXCHANGE RATE (CRITICAL — do NOT invert):
 "exchangeRateToMYR" means: how many MYR you get for 1 unit of ${state.currency}.
 Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
-(Key rates: SGD=3.40, USD=4.48, TWD=0.142, THB=0.131, JPY=0.030, EUR=4.87, GBP=5.65, IDR=0.0000285, HKD=0.574, KRW=0.0033, AUD=2.84, CNY=0.618)
+(Key rates: SGD=${KNOWN_RATES.SGD.toFixed(3)}, USD=${KNOWN_RATES.USD.toFixed(3)}, TWD=${KNOWN_RATES.TWD.toFixed(3)}, THB=${KNOWN_RATES.THB.toFixed(3)}, JPY=${KNOWN_RATES.JPY.toFixed(4)}, EUR=${KNOWN_RATES.EUR.toFixed(3)}, GBP=${KNOWN_RATES.GBP.toFixed(3)}, HKD=${KNOWN_RATES.HKD.toFixed(3)}, AUD=${KNOWN_RATES.AUD.toFixed(3)}, CNY=${KNOWN_RATES.CNY.toFixed(3)})
 
 1. ROOM TYPES (2–3 tiers per hotel: Standard/Deluxe/Suite). Single realistic AI-estimated price per room in ${state.currency}/night based on Booking.com/Agoda market rates for ${state.city} around ${state.checkIn}.
    ➜ exchangeRateToMYR: must be ~${KNOWN_RATES[state.currency]||1} (1 ${state.currency} in MYR)
@@ -2355,6 +2392,9 @@ function toggleSavedPanel() {
 }
 
 function init() {
+  // Fetch live exchange rates (non-blocking, cached 12 h)
+  fetchExchangeRates().then(() => updateExchangeRateBadge([])).catch(() => {});
+
   // Fetch Google Maps key from backend (non-blocking)
   fetch('/api/config').then(r => r.json()).then(cfg => {
     if (cfg.googleMapsKey) _gmapsKey = cfg.googleMapsKey;
