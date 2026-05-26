@@ -423,9 +423,19 @@ const KNOWN_RATES = {
   NZD:2.66, LKR:0.015, NPR:0.033
 };
 
-// Preferred-hotel fuzzy match — tolerates typos like "Oasis" vs "Oasia"
-// After a targeted Places lookup stores the real name in window._prefCanonical,
-// subsequent checks use that canonical name for reliable matching.
+// Edit distance — lets us match "Oasis" ↔ "Oasia" (1 char off) but reject "Oasis" vs "Holiday"
+function editDist(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({length: m+1}, (_, i) => Array.from({length: n+1}, (_, j) => i ? (j ? 0 : i) : j));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+// Preferred-hotel match — brand-word edit distance tolerates 1-char typos.
+// "Oasis Hotel Novena" correctly matches "Oasia Hotel Novena" (brand dist=1)
+// but does NOT match "Holiday Inn Express Novena" (brand dist=6).
 function matchesPref(hotelName) {
   const n = (hotelName || '').toLowerCase();
   const p = (state.preferredHotel || '').toLowerCase().trim();
@@ -433,12 +443,12 @@ function matchesPref(hotelName) {
   if (n.includes(p)) return true;                         // exact typed match
   const canon = (window._prefCanonical || '').toLowerCase();
   if (canon && n.includes(canon)) return true;            // canonical Google name
-  // Fuzzy: split user-typed name into significant words, require ≥50% to appear in hotel name
-  const SKIP = new Set(['hotel','resort','inn','the','and','by','at','de']);
-  const words = p.split(/\s+/).filter(w => w.length > 2 && !SKIP.has(w));
-  if (!words.length) return false;
-  const hits = words.filter(w => n.includes(w)).length;
-  return hits >= Math.max(1, Math.floor(words.length * 0.5));
+  // Brand-word edit distance: extract first significant (non-generic) word from each name
+  const GENERIC = new Set(['hotel','resort','inn','the','and','by','at','de','suites','suite','express','studios','spa']);
+  const brand = s => s.split(/\s+/).find(w => w.length > 3 && !GENERIC.has(w)) || '';
+  const pBrand = brand(p);
+  const nBrand = brand(n);
+  return !!(pBrand && nBrand && editDist(pBrand, nBrand) <= 1);
 }
 
 // Fetch live exchange rates (base MYR) — updates KNOWN_RATES in-place, cached 12 h
@@ -1356,8 +1366,9 @@ async function handleSearch(e) {
             body: JSON.stringify({ city: state.city, textQuery: `${state.preferredHotel} ${state.city}`, maxResults: 3 })
           }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
           if (prefPlaces.length > 0) {
-            // Take Google's top result — targeted query makes it the right hotel
-            const p = prefPlaces[0];
+            // Find best match by brand-word edit distance; fall back to first result
+            const raw = prefPlaces.find(pl => matchesPref(pl.displayName?.text || '')) || prefPlaces[0];
+            const p = raw;
             const prefHotel = {
               name:        p.displayName?.text || state.preferredHotel,
               rating:      p.rating || 0,
