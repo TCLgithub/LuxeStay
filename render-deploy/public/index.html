@@ -422,6 +422,25 @@ const KNOWN_RATES = {
   AUD:2.84, AED:1.22, INR:0.053, PHP:0.079, CNY:0.618, CAD:3.32,
   NZD:2.66, LKR:0.015, NPR:0.033
 };
+
+// Preferred-hotel fuzzy match — tolerates typos like "Oasis" vs "Oasia"
+// After a targeted Places lookup stores the real name in window._prefCanonical,
+// subsequent checks use that canonical name for reliable matching.
+function matchesPref(hotelName) {
+  const n = (hotelName || '').toLowerCase();
+  const p = (state.preferredHotel || '').toLowerCase().trim();
+  if (!p) return false;
+  if (n.includes(p)) return true;                         // exact typed match
+  const canon = (window._prefCanonical || '').toLowerCase();
+  if (canon && n.includes(canon)) return true;            // canonical Google name
+  // Fuzzy: split user-typed name into significant words, require ≥50% to appear in hotel name
+  const SKIP = new Set(['hotel','resort','inn','the','and','by','at','de']);
+  const words = p.split(/\s+/).filter(w => w.length > 2 && !SKIP.has(w));
+  if (!words.length) return false;
+  const hits = words.filter(w => n.includes(w)).length;
+  return hits >= Math.max(1, Math.floor(words.length * 0.5));
+}
+
 // Fetch live exchange rates (base MYR) — updates KNOWN_RATES in-place, cached 12 h
 async function fetchExchangeRates() {
   const CACHE_KEY = 'ls_fx_cache';
@@ -792,26 +811,7 @@ async function fetchRealHotels() {
   });
   window._placesRawCount = places.length;
 
-  // ── Inject preferred hotel if not already in results ──
-  if (state.preferredHotel && PROXY_MODE) {
-    const prefLower = state.preferredHotel.toLowerCase();
-    const alreadyIn = filtered.some(p => (p.displayName?.text || '').toLowerCase().includes(prefLower));
-    if (!alreadyIn) {
-      try {
-        const prefQuery = `${state.preferredHotel} ${state.city}`;
-        const prefRes = await fetch('/api/places', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ city: state.city, textQuery: prefQuery, maxResults: 5 })
-        }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
-        // Accept the first result whose name contains the preferred name keyword
-        const match = prefRes.find(p => (p.displayName?.text || '').toLowerCase().includes(prefLower));
-        if (match) filtered.push(match);
-      } catch(e) { /* silent — preferred hotel just won't have real data */ }
-    }
-  }
-
-  const mapPlace = p => ({
+  return filtered.map(p => ({
     name:        p.displayName?.text || 'Unknown Hotel',
     rating:      p.rating || 0,
     reviewCount: p.userRatingCount || 0,
@@ -823,9 +823,7 @@ async function fetchRealHotels() {
     reviews:     (p.reviews || [])
       .map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0, 300) }))
       .filter(rv => rv.text)
-  });
-
-  return filtered.map(mapPlace);
+  }));
 }
 
 // ═══════════════════════════════════════════════════
@@ -839,10 +837,9 @@ function buildPromptWithRealData(hotels) {
   const VERY_EXP_FLOOR = { SGD:380, USD:280, MYR:1300, THB:11000, JPY:45000, EUR:280, GBP:240, HKD:2200, AUD:420, IDR:4200000, TWD:8500, KRW:370000, CNY:2000 };
 
   window._preFilterDiag = [];
-  const _prefLower = (state.preferredHotel || '').toLowerCase().trim();
   const eligible = hotels.filter(h => {
     // Preferred hotel always passes pre-filter
-    if (_prefLower && h.name.toLowerCase().includes(_prefLower)) return true;
+    if (matchesPref(h.name)) return true;
 
     if ((h.rating || 0) < state.minRating - 0.3) {
       window._preFilterDiag.push({ name: h.name, reason: `rating ${h.rating} below min ${state.minRating}` });
@@ -870,10 +867,10 @@ function buildPromptWithRealData(hotels) {
   const topHotels = [...eligible].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, cap);
 
   // Always include preferred hotel even if it fell outside the cap (lower rating)
-  if (_prefLower) {
-    const prefInTop = topHotels.some(h => h.name.toLowerCase().includes(_prefLower));
+  if (state.preferredHotel) {
+    const prefInTop = topHotels.some(h => matchesPref(h.name));
     if (!prefInTop) {
-      const prefHotel = eligible.find(h => h.name.toLowerCase().includes(_prefLower));
+      const prefHotel = eligible.find(h => matchesPref(h.name));
       if (prefHotel) topHotels.push(prefHotel);
     }
   }
@@ -883,7 +880,7 @@ function buildPromptWithRealData(hotels) {
       ? h.reviews.slice(0, 3).map(rv => `       [${rv.rating}★] "${(rv.text||'').slice(0, 120)}"`).join('\n')
       : '       (No review snippets available)';
     const tier = {PRICE_LEVEL_INEXPENSIVE:'$ Budget',PRICE_LEVEL_MODERATE:'$$ Mid-range',PRICE_LEVEL_EXPENSIVE:'$$$ Upscale',PRICE_LEVEL_VERY_EXPENSIVE:'$$$$ Luxury'}[h.priceLevel] || '';
-    const isPref = _prefLower && h.name.toLowerCase().includes(_prefLower);
+    const isPref = matchesPref(h.name);
     return `${i+1}. ${h.name}${isPref ? ' ★PREFERRED' : ''}
      Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews${tier ? ` | Price tier: ${tier}` : ''}
      Address: ${h.address}
@@ -1226,12 +1223,10 @@ function filterAndScore(data) {
 
   // Step 2: filter with diagnostics
   const hasDistFilter = _nearLat && state.nearLocation && (state.minKm > 0 || state.maxKm < 50);
-  const prefLower = (state.preferredHotel || '').toLowerCase().trim();
-  const isPreferred = name => prefLower && name.toLowerCase().includes(prefLower);
 
   mapped.forEach(h => {
     // Preferred hotel always passes all filters
-    if (isPreferred(h.name)) { h._isPreferred = true; return; }
+    if (matchesPref(h.name)) { h._isPreferred = true; return; }
 
     if (!h.roomTypes.length) { h._excluded = 'no room data'; return; }
 
@@ -1347,6 +1342,44 @@ async function handleSearch(e) {
   try {
     setSearchStatus('Fetching real hotels from Google Maps…');
     const hotels = await fetchRealHotels();
+    window._prefCanonical = ''; // reset before each search
+
+    // ── Inject preferred hotel via targeted lookup ──────────────
+    if (state.preferredHotel && PROXY_MODE) {
+      const alreadyIn = hotels.some(h => matchesPref(h.name));
+      if (!alreadyIn) {
+        try {
+          setSearchStatus(`Looking up preferred hotel: ${state.preferredHotel}…`);
+          const prefPlaces = await fetch('/api/places', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ city: state.city, textQuery: `${state.preferredHotel} ${state.city}`, maxResults: 3 })
+          }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
+          if (prefPlaces.length > 0) {
+            // Take Google's top result — targeted query makes it the right hotel
+            const p = prefPlaces[0];
+            const prefHotel = {
+              name:        p.displayName?.text || state.preferredHotel,
+              rating:      p.rating || 0,
+              reviewCount: p.userRatingCount || 0,
+              priceLevel:  p.priceLevel || '',
+              website:     p.websiteUri || '',
+              address:     p.formattedAddress || '',
+              lat:         p.location?.latitude  || null,
+              lng:         p.location?.longitude || null,
+              reviews:     (p.reviews || []).map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0,300) })).filter(rv => rv.text)
+            };
+            hotels.push(prefHotel);
+            window._prefCanonical = prefHotel.name.toLowerCase(); // store for fuzzy match
+          }
+        } catch(e) { /* silent */ }
+      } else {
+        // Already found — store its canonical name for filter bypass
+        const found = hotels.find(h => matchesPref(h.name));
+        if (found) window._prefCanonical = found.name.toLowerCase();
+      }
+    }
+
     lastRealHotels = hotels;
     const rawCount = window._placesRawCount || hotels.length;
     const stepMsg = rawCount === hotels.length
