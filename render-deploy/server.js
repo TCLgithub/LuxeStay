@@ -119,7 +119,7 @@ app.post('/api/anthropic', async (req, res) => {
 app.post('/api/gemini', async (req, res) => {
   const key = process.env.GEMINI_API_KEY || '';
   if (!key) return res.status(503).json({ error: 'GEMINI_API_KEY not configured' });
-  const model = req.body.model || 'gemini-2.0-flash';
+  const model = req.body.model || 'gemini-2.5-flash';
   const { model: _m, ...body } = req.body;
   try {
     const r = await fetch(
