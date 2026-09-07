@@ -119,7 +119,7 @@ app.post('/api/anthropic', async (req, res) => {
 app.post('/api/gemini', async (req, res) => {
   const key = process.env.GEMINI_API_KEY || '';
   if (!key) return res.status(503).json({ error: 'GEMINI_API_KEY not configured' });
-  const model = req.body.model || 'gemini-2.5-flash';
+  const model = req.body.model || 'gemini-flash-latest';
   const { model: _m, ...body } = req.body;
   try {
     const r = await fetch(
@@ -136,23 +136,32 @@ app.post('/api/gemini', async (req, res) => {
 // ── OpenAI-compatible (OpenAI, DeepSeek, Groq) ─────────────────────────────
 app.post('/api/openai', async (req, res) => {
   const model = (req.body.model || '').toLowerCase();
-  let key, baseUrl;
+  let key, baseUrl, isOpenAI = false, isDeepSeek = false;
 
   if (model.startsWith('deepseek')) {
     key = process.env.DEEPSEEK_API_KEY || '';
     baseUrl = 'https://api.deepseek.com/v1/chat/completions';
+    isDeepSeek = true;
   } else if (/llama|mixtral|gemma/.test(model)) {
     key = process.env.GROQ_API_KEY || '';
     baseUrl = 'https://api.groq.com/openai/v1/chat/completions';
   } else {
     key = process.env.OPENAI_API_KEY || '';
     baseUrl = 'https://api.openai.com/v1/chat/completions';
+    isOpenAI = true;
   }
 
   if (!key) return res.status(503).json({ error: `API key not configured for model: ${req.body.model}` });
 
   try {
-    const body = { ...req.body, max_tokens: Math.min(req.body.max_tokens || 8000, 8000) };
+    // Newer OpenAI models (gpt-5.x) require max_completion_tokens instead of max_tokens;
+    // DeepSeek/Groq still use max_tokens. Normalize regardless of what the client sent.
+    const { max_tokens, max_completion_tokens, thinking, ...rest } = req.body;
+    const tokenLimit = Math.min(max_completion_tokens || max_tokens || 8000, 8000);
+    const body = { ...rest, ...(isOpenAI ? { max_completion_tokens: tokenLimit } : { max_tokens: tokenLimit }) };
+    // DeepSeek V4 defaults to "thinking" mode, which can consume the whole token
+    // budget on chain-of-thought and leave nothing for the actual JSON answer
+    if (isDeepSeek) body.thinking = thinking || { type: 'disabled' };
     const r = await fetch(baseUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${key}`, 'content-type': 'application/json' },

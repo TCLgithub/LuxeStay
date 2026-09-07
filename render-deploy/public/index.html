@@ -416,9 +416,9 @@
 // CONFIG
 // ═══════════════════════════════════════════════════
 const PROVIDERS = ['gemini','anthropic','deepseek','openai'];
-const P_LABELS  = { gemini:'Gemini 2.5 Flash', deepseek:'DeepSeek V4', anthropic:'Claude Sonnet 5', openai:'GPT-5.4 Mini' };
+const P_LABELS  = { gemini:'Gemini Flash', deepseek:'DeepSeek V4', anthropic:'Claude Sonnet 5', openai:'GPT-5.4 Mini' };
 const DEFAULT_MODELS = {
-  gemini:    'gemini-2.5-flash',
+  gemini:    'gemini-flash-latest',
   deepseek:  'deepseek-v4-flash',
   anthropic: 'claude-sonnet-5',
   openai:    'gpt-5.4-mini'
@@ -618,7 +618,7 @@ function buildSettingsPanel() {
       <div class="space-y-2">
         ${[
           ['GOOGLE_PLACES_API_KEY','Google Maps — real hotel data'],
-          ['GEMINI_API_KEY','Google Gemini 2.5 Flash (primary AI)'],
+          ['GEMINI_API_KEY','Google Gemini Flash (primary AI)'],
           ['ANTHROPIC_API_KEY','Claude Sonnet 5 (fallback 3)'],
           ['OPENAI_API_KEY','GPT-5.4 Mini (fallback 4)'],
           ['DEEPSEEK_API_KEY','DeepSeek V4 (fallback 2)'],
@@ -1109,13 +1109,22 @@ async function callAnthropic(prompt, key, model) {
 }
 
 async function callOpenAICompat(prompt, key, model, variant) {
-  const body = { model, max_tokens:8000,
+  const body = { model,
     messages:[
       {role:'system',content:'Return ONLY a valid JSON array. No markdown, no explanation.'},
       {role:'user',content:prompt}
     ]
   };
-  if (variant === 'openai') body.response_format = {type:'json_object'};
+  if (variant === 'openai') {
+    // Newer OpenAI models (gpt-5.x family) reject the legacy 'max_tokens' param
+    body.max_completion_tokens = 8000;
+    body.response_format = {type:'json_object'};
+  } else {
+    body.max_tokens = 8000;
+    // DeepSeek V4 defaults to "thinking" mode, which can burn the whole token
+    // budget on chain-of-thought and leave no room for the actual JSON answer
+    if (variant === 'deepseek') body.thinking = { type: 'disabled' };
+  }
   const baseUrl = variant === 'deepseek' ? 'https://api.deepseek.com/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
   const r = PROXY_MODE
     ? await fetch('/api/openai', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
