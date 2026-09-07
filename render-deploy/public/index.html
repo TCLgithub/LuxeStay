@@ -324,10 +324,17 @@
       </div>
 
       <!-- Saved searches panel -->
-      <div id="saved-panel" class="hidden bg-slate-50 rounded-2xl border border-slate-100 p-3 space-y-2">
-        <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saved Searches</p>
-        <div id="saved-list" class="space-y-1.5 max-h-48 overflow-y-auto"></div>
-        <p id="saved-empty" class="text-[10px] text-slate-400 text-center py-2">No saved searches yet.</p>
+      <div id="saved-panel" class="hidden bg-slate-50 rounded-2xl border border-slate-100 p-3 space-y-4">
+        <div class="space-y-2">
+          <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saved Searches <span class="font-normal normal-case">(criteria only)</span></p>
+          <div id="saved-list" class="space-y-1.5 max-h-48 overflow-y-auto"></div>
+          <p id="saved-empty" class="text-[10px] text-slate-400 text-center py-2">No saved searches yet.</p>
+        </div>
+        <div class="space-y-2 pt-3 border-t border-slate-200">
+          <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saved Results <span class="font-normal normal-case">(full data)</span></p>
+          <div id="saved-results-list" class="space-y-1.5 max-h-48 overflow-y-auto"></div>
+          <p id="saved-results-empty" class="text-[10px] text-slate-400 text-center py-2">No saved results yet.</p>
+        </div>
       </div>
     </form>
   </aside>
@@ -354,6 +361,11 @@
           </button>
           <!-- Export buttons pushed right -->
           <div class="ml-auto flex gap-2 flex-shrink-0">
+            <button id="save-results-btn" onclick="saveResults()"
+              class="bg-slate-800 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-slate-900 shadow-lg transition-all active:scale-95 whitespace-nowrap">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2M7 12l5 5 5-5M12 17V3"/></svg>
+              Save Results
+            </button>
             <button id="export-pdf-btn" onclick="exportHotelsPDF()"
               class="bg-emerald-600 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-emerald-700 shadow-lg transition-all active:scale-95 whitespace-nowrap">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>
@@ -2576,7 +2588,112 @@ function toggleSavedPanel() {
   const panel = document.getElementById('saved-panel');
   const isHidden = panel.classList.contains('hidden');
   panel.classList.toggle('hidden');
-  if (isHidden) renderSavedList();
+  if (isHidden) { renderSavedList(); renderSavedResultsList(); }
+}
+
+// ═══════════════════════════════════════════════════
+// SAVE / LOAD RESULTS (full hotel data, not just search criteria)
+// ═══════════════════════════════════════════════════
+function getSavedResults() {
+  try { return JSON.parse(localStorage.getItem('ls_saved_results') || '[]'); } catch { return []; }
+}
+
+function saveResults() {
+  if (!results.length) { toast('No results to save', 2000); return; }
+  const name = window.prompt('Name this result set:', `${state.city} ${state.checkIn}`);
+  if (!name) return;
+  const saved = getSavedResults();
+  saved.unshift({
+    id: Date.now(),
+    name: name.trim(),
+    ts: new Date().toLocaleDateString(),
+    city: state.city, district: state.district, nearLocation: state.nearLocation,
+    checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency,
+    viewMode, hasRealData: !!lastRealHotels,
+    results
+  });
+  // localStorage has a hard size cap — keep at most 10 result sets, and if it's
+  // still too big (rich per-hotel data adds up fast), drop the oldest until it fits
+  while (saved.length) {
+    try {
+      localStorage.setItem('ls_saved_results', JSON.stringify(saved.slice(0, 10)));
+      renderSavedResultsList();
+      toast('Results saved!', 2000);
+      return;
+    } catch (e) {
+      if (saved.length <= 1) { toast('This result set is too large to save locally', 3000); return; }
+      saved.pop();
+    }
+  }
+}
+
+function loadSavedResults(id) {
+  const saved = getSavedResults();
+  const item = saved.find(s => s.id === id);
+  if (!item) return;
+  results = item.results;
+  lastRealHotels = item.hasRealData ? [] : null; // placeholder — display code only checks truthiness
+  state.city = item.city || state.city;
+  state.district = item.district || '';
+  state.nearLocation = item.nearLocation || '';
+  state.checkIn = item.checkIn || state.checkIn;
+  state.checkOut = item.checkOut || state.checkOut;
+  state.currency = item.currency || state.currency;
+  document.getElementById('city').value = state.city;
+  document.getElementById('district').value = state.district;
+  document.getElementById('near-location').value = state.nearLocation;
+  document.getElementById('currency-select').value = state.currency;
+  buildDatePicker('checkin-picker', 'Check-In Date', state.checkIn, 'checkIn');
+  buildDatePicker('checkout-picker', 'Check-Out Date', state.checkOut, 'checkOut');
+  updateNightsDisplay();
+
+  document.getElementById('error-box').classList.add('hidden');
+  document.getElementById('results-controls').classList.remove('hidden');
+  const badge = document.getElementById('data-source-badge');
+  const btext = document.getElementById('data-source-text');
+  badge.classList.remove('hidden');
+  badge.classList.add('flex');
+  btext.innerHTML = lastRealHotels
+    ? `<span class="badge-real" style="background:transparent;border:none;padding:0">✓ Real Google Ratings</span> + AI Prices`
+    : `<span class="badge-est" style="background:transparent;border:none;padding:0">AI-Only Mode</span>`;
+
+  setViewMode(item.viewMode || 'comparison'); // also calls renderResults()
+  updateExchangeRateBadge(results);
+  renderMap(results);
+  toggleSavedPanel();
+  toast(`Loaded: ${item.name}`, 2000);
+}
+
+function deleteSavedResults(id) {
+  const saved = getSavedResults().filter(s => s.id !== id);
+  localStorage.setItem('ls_saved_results', JSON.stringify(saved));
+  renderSavedResultsList();
+}
+
+function renderSavedResultsList() {
+  const saved = getSavedResults();
+  const list  = document.getElementById('saved-results-list');
+  const empty = document.getElementById('saved-results-empty');
+  if (!list) return;
+  if (!saved.length) {
+    list.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+  list.innerHTML = saved.map(s => `
+    <div class="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-slate-100">
+      <div class="flex-1 min-w-0">
+        <p class="text-[11px] font-black text-slate-800 truncate">${s.name}</p>
+        <p class="text-[9px] text-slate-400">${s.city || ''} · ${s.results.length} hotels · ${s.ts}</p>
+      </div>
+      <button onclick="loadSavedResults(${s.id})"
+        class="text-[9px] font-black text-blue-600 hover:text-blue-800 px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 transition-all whitespace-nowrap">
+        Load
+      </button>
+      <button onclick="deleteSavedResults(${s.id})"
+        class="text-[9px] font-black text-rose-400 hover:text-rose-600 px-1.5 py-1 rounded-lg hover:bg-rose-50 transition-all">✕</button>
+    </div>`).join('');
 }
 
 function init() {
