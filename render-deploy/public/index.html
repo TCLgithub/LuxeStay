@@ -1098,6 +1098,11 @@ async function callGemini(prompt, key, model) {
 
 async function callAnthropic(prompt, key, model) {
   const body = { model, max_tokens:32000,
+    // Sonnet 5 / Opus 5 have adaptive thinking on by default; those reasoning tokens
+    // count against max_tokens and shift content[0] to a non-text "thinking" block.
+    // This task is a straightforward schema-following JSON generation, not a task
+    // that benefits from reasoning, so disable it for speed, cost, and reliability.
+    thinking: { type: 'disabled' },
     system:'You are a hotel data expert. Return ONLY valid JSON array. No markdown.',
     messages:[{role:'user',content:prompt}] };
   const r = PROXY_MODE
@@ -1105,7 +1110,8 @@ async function callAnthropic(prompt, key, model) {
     : await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'}, body:JSON.stringify(body) });
   const data = await r.json();
   if (!r.ok) throw new Error(data.error?.message || `Anthropic ${r.status}`);
-  return data.content?.[0]?.text || '';
+  // Don't assume content[0] is the text block — a thinking block (if present) comes first
+  return data.content?.find(c => c.type === 'text')?.text || '';
 }
 
 async function callOpenAICompat(prompt, key, model, variant) {
