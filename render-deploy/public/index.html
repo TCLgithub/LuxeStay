@@ -202,6 +202,12 @@
         <div id="accom-pills" class="flex flex-wrap gap-2"></div>
       </div>
 
+      <!-- Trip Vibe / Activities — grouped pill toggles, multi-select -->
+      <div class="space-y-3 bg-slate-50 p-4 rounded-[28px] border border-slate-100 shadow-inner">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Trip Vibe &amp; Activities <span class="font-normal normal-case">(optional, pick any)</span></label>
+        <div id="vibe-pills" class="space-y-3"></div>
+      </div>
+
       <!-- MRT / Public Transport Distance -->
       <div class="space-y-1">
         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Max Distance to MRT</label>
@@ -227,6 +233,7 @@
           <option value="4.5">4.5+</option>
           <option value="4.7">4.7+</option>
         </select>
+        <p class="text-[9px] text-slate-400 font-bold pt-0.5">Ranked by highest review count, then highest rating · min. 200 reviews required</p>
       </div>
 
       <!-- Max Results -->
@@ -573,9 +580,10 @@ const PROXY_MODE = (() => {
 let state = {
   city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '',
   checkIn: '2026-06-30', checkOut: '2026-07-03',
-  accommodationTypes: ['Hotel'], maxMRTWalk: 'any', minRating: 3.5,
+  accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 3.5,
   minPrice: 500, maxPrice: 1500, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12
 };
+const MIN_REVIEW_COUNT = 200;
 let results = [];
 let viewMode = 'comparison';
 let lastRealHotels = null; // track whether we got real data
@@ -750,9 +758,13 @@ async function fetchRealHotels() {
   const accomQuery = state.accommodationTypes.length
     ? state.accommodationTypes.join(' or ')
     : 'hotel resort';
+  const vibeLabels = state.tripVibes.length
+    ? state.tripVibes.map(t => VIBE_GROUPS.flatMap(g => g.items).find(i => i.type === t)?.label || t)
+    : [];
+  const vibeQuery = vibeLabels.length ? ` with ${vibeLabels.join(', ')}` : '';
   // Search in city/district only — nearLocation is for distance filtering, not the search area
   const locationQuery = [state.district, state.city].filter(Boolean).join(', ');
-  const textQuery = `top rated ${accomQuery} in ${locationQuery}`;
+  const textQuery = `top rated ${accomQuery} in ${locationQuery}${vibeQuery}`;
 
   let places = [];
 
@@ -771,7 +783,7 @@ async function fetchRealHotels() {
     // When district specified: focus queries on that district/area
     const queries = state.district ? [
       `hotels in ${locationQuery}`,
-      `${accomQuery} near ${state.district} ${state.city}`,
+      `${accomQuery} near ${state.district} ${state.city}${vibeQuery}`,
       `hotels ${state.city} ${state.district} area`,
       `affordable ${accomQuery} ${locationQuery}`
     ] : [
@@ -779,7 +791,7 @@ async function fetchRealHotels() {
       `hotels north ${state.city}`,
       `hotels east ${state.city}`,
       `hotels west ${state.city}`,
-      `hotels central downtown ${state.city}`,
+      `hotels central downtown ${state.city}${vibeQuery}`,
       `affordable ${accomQuery} ${state.city}`
     ];
     const batches = await Promise.all(queries.map(q => call(q)));
@@ -816,6 +828,7 @@ async function fetchRealHotels() {
   const refName = (state.nearLocation || '').toLowerCase().split(' ').slice(0, 2).join(' ');
   const filtered = places.filter(p => {
     if ((p.rating || 0) < Math.min(state.minRating, 3.0)) return false;
+    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < MIN_REVIEW_COUNT) return false;
     if (refName && (p.displayName?.text || '').toLowerCase().includes(refName)) return false;
     return true;
   });
@@ -855,6 +868,10 @@ function buildPromptWithRealData(hotels) {
       window._preFilterDiag.push({ name: h.name, reason: `rating ${h.rating} below min ${state.minRating}` });
       return false;
     }
+    if ((h.reviewCount || 0) < MIN_REVIEW_COUNT) {
+      window._preFilterDiag.push({ name: h.name, reason: `${h.reviewCount} reviews below min ${MIN_REVIEW_COUNT}` });
+      return false;
+    }
     if (h.priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE') {
       const floor = VERY_EXP_FLOOR[state.currency] || 380;
       const maxLocal = state.maxPrice / (KNOWN_RATES[state.currency] || 1);
@@ -874,14 +891,21 @@ function buildPromptWithRealData(hotels) {
   });
 
   const cap = Math.min(eligible.length, (state.maxResults || 12) + 8);
-  const topHotels = [...eligible].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, cap);
+  // Rank by review volume first (most-reviewed = most trusted), rating as tie-breaker
+  const topHotels = [...eligible].sort((a, b) =>
+    (b.reviewCount || 0) - (a.reviewCount || 0) || (b.rating || 0) - (a.rating || 0)
+  ).slice(0, cap);
 
-  // Always include preferred hotel even if it fell outside the cap (lower rating)
+  // Always include preferred hotel and put it FIRST so the AI never truncates it
   if (state.preferredHotel) {
-    const prefInTop = topHotels.some(h => matchesPref(h.name));
-    if (!prefInTop) {
+    const prefIdx = topHotels.findIndex(h => matchesPref(h.name));
+    if (prefIdx > 0) {
+      // Already in list but not first — move to front
+      topHotels.unshift(topHotels.splice(prefIdx, 1)[0]);
+    } else if (prefIdx === -1) {
+      // Not in list (outside cap) — prepend from eligible
       const prefHotel = eligible.find(h => matchesPref(h.name));
-      if (prefHotel) topHotels.push(prefHotel);
+      if (prefHotel) topHotels.unshift(prefHotel);
     }
   }
 
@@ -925,7 +949,9 @@ SEARCH CONTEXT:
 - Budget: ${state.minPrice}–${state.maxPrice} MYR per night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night)
 - Currency: ${state.currency}
 - Types wanted: ${state.accommodationTypes.join(', ')}
+${state.tripVibes.length ? '- Trip vibe / activities wanted: ' + state.tripVibes.map(t => VIBE_GROUPS.flatMap(g => g.items).find(i => i.type === t)?.label || t).join(', ') : ''}
 - MRT preference: ${state.maxMRTWalk === 'any' ? 'No restriction' : state.maxMRTWalk === 'walk' ? 'Walking distance only' : 'Within ' + state.maxMRTWalk}
+- Reviews: all properties below already have ≥${MIN_REVIEW_COUNT} Google reviews — when ranking pros/cons, favour the ones with both the highest review counts and the highest ratings.
 ${locationNote ? '- ' + locationNote : ''}
 ${mrtNote}
 
@@ -942,7 +968,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
    staffFriendliness | overallCondition | cleanliness | transitProximity | acPerformance
    noiseLevel | soundproofing | roomComfort | bathroomCondition | maintenanceQuality
 
-3. PROS (2–3 bullet points from real reviews).
+3. PROS (2–3 bullet points from real reviews${state.tripVibes.length ? '; call out any amenities/activities matching the requested trip vibe above (e.g. spa, hiking trails, beach access, hot spring, wildlife tours) when mentioned in reviews' : ''}).
 4. CONS (1–2 bullet points from real reviews).
 5. PROFILE RECOMMENDATIONS: One sentence each for Business, Family, Budget, Light Sleeper.
 6. PROXIMITY: Distance to nearest MRT/metro (name it), airport, beach.
@@ -976,12 +1002,16 @@ function buildPromptAIOnly() {
   const locParts  = [state.city, state.district, state.nearLocation ? 'near ' + state.nearLocation : ''].filter(Boolean).join(', ');
   const mrtNote   = state.maxMRTWalk !== 'any'
     ? `PRIORITY: Only include properties within ${state.maxMRTWalk === 'walk' ? 'walking distance' : state.maxMRTWalk} of MRT/metro.` : '';
+  const vibeNote = state.tripVibes.length
+    ? `Trip vibe / activities wanted: ${state.tripVibes.map(t => VIBE_GROUPS.flatMap(g => g.items).find(i => i.type === t)?.label || t).join(', ')}. Favour properties (or nearby areas) that genuinely support these activities and mention them in pros where relevant.`
+    : '';
   return `Act as a world-class travel data aggregator. Screen top-rated accommodations in ${locParts} for ${state.checkIn} to ${state.checkOut}.
 ${preferred}
 Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5 | Budget: ${state.minPrice}–${state.maxPrice} MYR/night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night) | Currency: ${state.currency}
 ${mrtNote}
+${vibeNote}
 
-CRITICAL: Top ${state.maxResults || 12} properties by review volume. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
+CRITICAL: Only include properties with at least ${MIN_REVIEW_COUNT} reviews. Among those, select the Top ${state.maxResults || 12} by prioritising the HIGHEST review count first, then the HIGHEST rating. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
 ${state.nearLocation && (state.minKm > 0 || state.maxKm < 50) ? `DISTANCE: Only include hotels ${state.minKm}–${state.maxKm}km from ${state.nearLocation}. Do NOT include ${state.nearLocation} itself. Focus on neighbourhoods at that distance.` : ''}
 
 EXCHANGE RATE (do NOT invert): "exchangeRateToMYR" = how many MYR for 1 ${state.currency}. Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR.
@@ -1144,6 +1174,8 @@ async function callWithFallback(prompt) {
 // ═══════════════════════════════════════════════════
 function calculateScore(hotel) {
   let s = hotel.guestRating * 1.5;
+  // Review-volume bonus — more reviews = more trustworthy rating, capped so it never outweighs guest rating
+  s += Math.min(1.0, Math.log10((hotel.reviewCount || 0) + 1) / 4);
   if (state.preferredHotel && hotel.name.toLowerCase().includes(state.preferredHotel.toLowerCase())) s += 2.0;
   if ((hotel.proximity?.mrt||'').toLowerCase().match(/walking|km/)) s += 1.0;
   if (hotel.carParkAvailable) s += 0.5;
@@ -1245,6 +1277,11 @@ function filterAndScore(data) {
       return;
     }
 
+    if ((h.reviewCount || 0) < MIN_REVIEW_COUNT) {
+      h._excluded = `only ${h.reviewCount || 0} reviews — below min ${MIN_REVIEW_COUNT}`;
+      return;
+    }
+
     if (hasDistFilter && h.distKm !== null) {
       if (h.distKm < state.minKm || h.distKm > state.maxKm) {
         h._excluded = `${h.distKm.toFixed(1)}km — outside ${state.minKm}–${state.maxKm}km range`;
@@ -1329,6 +1366,7 @@ async function handleSearch(e) {
   state.maxMRTWalk       = document.getElementById('mrt-distance').value;
   state.accommodationTypes = [...document.querySelectorAll('.accom-pill.active')].map(el => el.dataset.type);
   if (!state.accommodationTypes.length) state.accommodationTypes = ['Hotel','Resort'];
+  state.tripVibes = [...document.querySelectorAll('.vibe-pill.active')].map(el => el.dataset.type);
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
   state.minPrice     = parseInt(document.getElementById('min-price').value);
   state.maxPrice     = parseInt(document.getElementById('max-price').value);
@@ -1409,6 +1447,32 @@ async function handleSearch(e) {
     setStep(2,'active','Running AI analysis…');
     const { data, provider, model } = await callWithFallback(prompt);
     results = filterAndScore(data);
+
+    // ── Guaranteed preferred hotel injection ──────────────────────────
+    // If the AI omitted the preferred hotel, inject it directly from Places data
+    if (state.preferredHotel && results.every(h => !matchesPref(h.name))) {
+      const ph = (lastRealHotels || []).find(h => matchesPref(h.name));
+      if (ph) {
+        const rate = KNOWN_RATES[state.currency] || 1;
+        const distKm = (_nearLat && ph.lat && ph.lng) ? haversineKm(_nearLat, _nearLng, ph.lat, ph.lng) : null;
+        const stub = {
+          name: ph.name, type: 'Hotel', stars: 4,
+          guestRating: ph.rating || 0, reviewCount: ph.reviewCount || 0,
+          carParkAvailable: false, exchangeRateToMYR: rate,
+          roomTypes: [], features: [],
+          reviewMetrics: { staffFriendliness:{rating:0}, overallCondition:{rating:0}, cleanliness:{rating:0}, transitProximity:{rating:0}, acPerformance:{rating:0}, noiseLevel:{rating:0}, soundproofing:{rating:0}, roomComfort:{rating:0}, bathroomCondition:{rating:0}, maintenanceQuality:{rating:0} },
+          profileRecommendations: { business:'', family:'', budget:'', lightSleeper:'' },
+          proximity: { mrt:'—', beach:'—', airport:'—' },
+          pros: ['★ Preferred hotel — re-run search for full AI analysis'], cons: [],
+          lat: ph.lat, lng: ph.lng, distKm,
+          _isPreferred: true, _excluded: null
+        };
+        stub.compositeScore = calculateScore(stub) + 2;
+        results.unshift(stub); // always first
+        toast(`★ ${ph.name} added as preferred hotel`, 3000);
+      }
+    }
+
     if (results.length === 0) {
       const diag = (window._filterDiag || []);
       const preDiag = (window._preFilterDiag || []);
@@ -2301,11 +2365,14 @@ async function renderMap(hotels) {
 // ═══════════════════════════════════════════════════
 function buildAccomPills() {
   const types = [
+    { type:'Hostel',    label:'Hostel' },
     { type:'Hotel',     label:'Hotel' },
+    { type:'Boutique',  label:'Boutique' },
     { type:'Resort',    label:'Resort' },
     { type:'Villa',     label:'Villa' },
     { type:'Airbnb',    label:'Airbnb' },
     { type:'Serviced',  label:'Serviced Apt' },
+    { type:'Traditional', label:'Traditional' },
     { type:'Others',    label:'Others' },
   ];
   const container = document.getElementById('accom-pills');
@@ -2313,7 +2380,7 @@ function buildAccomPills() {
     const isActive = state.accommodationTypes.includes(t.type);
     return `<button type="button" data-type="${t.type}"
       class="accom-pill px-4 py-2 rounded-2xl text-[11px] font-black border transition-all ${isActive
-        ? 'bg-blue-700 text-white border-blue-700 shadow-md'
+        ? 'active bg-blue-700 text-white border-blue-700 shadow-md'
         : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-blue-300 hover:text-blue-600'}"
       onclick="toggleAccomPill(this)">
       ${t.label}
@@ -2329,6 +2396,65 @@ function toggleAccomPill(el) {
   } else {
     el.classList.add('active','bg-blue-700','text-white','border-blue-700','shadow-md');
     el.classList.remove('bg-slate-50','text-slate-400','border-slate-200');
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// TRIP VIBE / ACTIVITIES — grouped, multi-select pills
+// ═══════════════════════════════════════════════════
+const VIBE_GROUPS = [
+  { group: 'Relax & Wellness', icon: '🧘', items: [
+    { type:'Relax',    label:'Relax' },
+    { type:'Zen',      label:'Zen' },
+    { type:'HotSpring',label:'Hot Spring' },
+  ]},
+  { group: 'Beach & Water', icon: '🏖️', items: [
+    { type:'Beach',    label:'Beach Activities' },
+  ]},
+  { group: 'Adventure & Sport', icon: '⛰️', items: [
+    { type:'Hiking',   label:'Hiking' },
+    { type:'Sport',    label:'Sport Activities' },
+    { type:'Mountain', label:'Mountain' },
+    { type:'Snowcap',  label:'Snowcap' },
+  ]},
+  { group: 'Nature & Wildlife', icon: '🌿', items: [
+    { type:'Greenery', label:'Greenery' },
+    { type:'Animals',  label:'Animals' },
+  ]},
+  { group: 'Fun & Games', icon: '🎮', items: [
+    { type:'Games',    label:'Games' },
+  ]},
+];
+
+function buildVibePills() {
+  const container = document.getElementById('vibe-pills');
+  if (!container) return;
+  container.innerHTML = VIBE_GROUPS.map(g => `
+    <div class="space-y-1.5">
+      <p class="text-[9px] font-black text-slate-400 uppercase tracking-wider">${g.icon} ${g.group}</p>
+      <div class="flex flex-wrap gap-2">
+        ${g.items.map(t => {
+          const isActive = state.tripVibes.includes(t.type);
+          return `<button type="button" data-type="${t.type}"
+            class="vibe-pill px-3.5 py-1.5 rounded-2xl text-[11px] font-black border transition-all ${isActive
+              ? 'active bg-emerald-600 text-white border-emerald-600 shadow-md'
+              : 'bg-white text-slate-400 border-slate-200 hover:border-emerald-300 hover:text-emerald-600'}"
+            onclick="toggleVibePill(this)">
+            ${t.label}
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function toggleVibePill(el) {
+  const isActive = el.classList.contains('active');
+  if (isActive) {
+    el.classList.remove('active','bg-emerald-600','text-white','border-emerald-600','shadow-md');
+    el.classList.add('bg-white','text-slate-400','border-slate-200');
+  } else {
+    el.classList.add('active','bg-emerald-600','text-white','border-emerald-600','shadow-md');
+    el.classList.remove('bg-white','text-slate-400','border-slate-200');
   }
 }
 
@@ -2350,7 +2476,7 @@ function saveSearch() {
     params: {
       city: state.city, district: state.district, nearLocation: state.nearLocation,
       preferredHotel: state.preferredHotel, checkIn: state.checkIn, checkOut: state.checkOut,
-      accommodationTypes: [...state.accommodationTypes], maxMRTWalk: state.maxMRTWalk,
+      accommodationTypes: [...state.accommodationTypes], tripVibes: [...state.tripVibes], maxMRTWalk: state.maxMRTWalk,
       minRating: state.minRating, minPrice: state.minPrice, maxPrice: state.maxPrice,
       currency: state.currency, minKm: state.minKm, maxKm: state.maxKm,
       maxResults: state.maxResults
@@ -2392,6 +2518,9 @@ function loadSearch(id) {
   document.querySelectorAll('.accom-pill').forEach(el => {
     if (state.accommodationTypes.includes(el.dataset.type)) el.classList.add('active');
   });
+  // Rebuild trip vibe pills
+  state.tripVibes = p.tripVibes || [];
+  buildVibePills();
   updateExchangeRateBadge([]);
   toast(`Loaded: ${item.name}`, 2000);
 }
@@ -2463,6 +2592,7 @@ function init() {
   document.querySelectorAll('.accom-pill').forEach(el => {
     if (state.accommodationTypes.includes(el.dataset.type)) el.classList.add('active');
   });
+  buildVibePills();
   // Wire district to also trigger currency detection
   document.getElementById('district').addEventListener('input', e => {
     autoDetectCurrency(document.getElementById('city').value + ' ' + e.target.value);
