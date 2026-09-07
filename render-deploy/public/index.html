@@ -416,11 +416,11 @@
 // CONFIG
 // ═══════════════════════════════════════════════════
 const PROVIDERS = ['gemini','anthropic','deepseek','openai'];
-const P_LABELS  = { gemini:'Gemini 2.5 Flash', deepseek:'DeepSeek V4', anthropic:'Claude Haiku 4.5', openai:'GPT-5.4 Mini' };
+const P_LABELS  = { gemini:'Gemini 2.5 Flash', deepseek:'DeepSeek V4', anthropic:'Claude Sonnet 5', openai:'GPT-5.4 Mini' };
 const DEFAULT_MODELS = {
   gemini:    'gemini-2.5-flash',
   deepseek:  'deepseek-v4-flash',
-  anthropic: 'claude-haiku-4-5-20251001',
+  anthropic: 'claude-sonnet-5',
   openai:    'gpt-5.4-mini'
 };
 const KNOWN_RATES = {
@@ -619,7 +619,7 @@ function buildSettingsPanel() {
         ${[
           ['GOOGLE_PLACES_API_KEY','Google Maps — real hotel data'],
           ['GEMINI_API_KEY','Google Gemini 2.5 Flash (primary AI)'],
-          ['ANTHROPIC_API_KEY','Claude Haiku 4.5 (fallback 3)'],
+          ['ANTHROPIC_API_KEY','Claude Sonnet 5 (fallback 3)'],
           ['OPENAI_API_KEY','GPT-5.4 Mini (fallback 4)'],
           ['DEEPSEEK_API_KEY','DeepSeek V4 (fallback 2)'],
         ].map(([k,d])=>`
