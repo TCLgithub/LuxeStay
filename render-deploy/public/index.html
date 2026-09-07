@@ -1097,7 +1097,7 @@ async function callGemini(prompt, key, model) {
 }
 
 async function callAnthropic(prompt, key, model) {
-  const body = { model, max_tokens:8000,
+  const body = { model, max_tokens:32000,
     system:'You are a hotel data expert. Return ONLY valid JSON array. No markdown.',
     messages:[{role:'user',content:prompt}] };
   const r = PROXY_MODE

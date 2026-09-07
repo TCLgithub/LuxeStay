@@ -98,7 +98,9 @@ app.post('/api/anthropic', async (req, res) => {
   const key = process.env.ANTHROPIC_API_KEY || '';
   if (!key) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured' });
   try {
-    const body = { ...req.body, max_tokens: Math.min(req.body.max_tokens || 8000, 8000) };
+    // Claude Sonnet 5 / Haiku 4.5 support well beyond 8K output tokens on the sync
+    // Messages API (128K / 64K respectively) — 8K was truncating larger hotel batches
+    const body = { ...req.body, max_tokens: Math.min(req.body.max_tokens || 32000, 32000) };
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
