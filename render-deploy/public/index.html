@@ -208,6 +208,19 @@
         <div id="vibe-pills" class="space-y-3"></div>
       </div>
 
+      <!-- Additional Criteria — checkboxes, default checked, uncheck to ignore -->
+      <div class="space-y-2 bg-slate-50 p-4 rounded-[28px] border border-slate-100 shadow-inner">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Additional Criteria <span class="font-normal normal-case">(uncheck to ignore)</span></label>
+        <div id="quality-checkboxes" class="space-y-2"></div>
+      </div>
+
+      <!-- Special Requirements — free text -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Special Requirements <span class="font-normal normal-case">(optional)</span></label>
+        <textarea id="special-requirements" rows="2" placeholder="e.g. bathtub in room, pet-friendly, late checkout, wheelchair accessible…"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-[13px] outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm resize-none"></textarea>
+      </div>
+
       <!-- MRT / Public Transport Distance -->
       <div class="space-y-1">
         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Max Distance to MRT</label>
@@ -593,8 +606,17 @@ let state = {
   city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '',
   checkIn: '2026-06-30', checkOut: '2026-07-03',
   accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 3.5,
-  minPrice: 500, maxPrice: 1500, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12
+  minPrice: 500, maxPrice: 1500, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12,
+  qualityCriteria: { renovated:true, quiet:true, cleanliness:true, modern:true, nonSmoking:true },
+  specialRequirements: ''
 };
+const QUALITY_CRITERIA = [
+  { key:'renovated',   label:'Newly Established or Renovated' },
+  { key:'quiet',       label:'Quiet / Low Noise' },
+  { key:'cleanliness', label:'High Cleanliness Standards' },
+  { key:'modern',      label:'Modern Facilities & Amenities' },
+  { key:'nonSmoking',  label:'Non-Smoking Property' },
+];
 const MIN_REVIEW_COUNT = 200;
 let results = [];
 let viewMode = 'comparison';
@@ -864,6 +886,15 @@ async function fetchRealHotels() {
 // ═══════════════════════════════════════════════════
 // PROMPT BUILDERS
 // ═══════════════════════════════════════════════════
+// Shared text block for both prompt builders: checked quality criteria + free-text requirements
+function buildCriteriaNote() {
+  const checked = QUALITY_CRITERIA.filter(c => state.qualityCriteria[c.key] !== false).map(c => c.label);
+  const lines = [];
+  if (checked.length) lines.push(`- Preferred qualities (favour hotels matching these; call it out in pros when reviews confirm it): ${checked.join(', ')}.`);
+  if (state.specialRequirements) lines.push(`- SPECIAL REQUIREMENT (address directly for every hotel — confirm if met, or note if uncertain/not mentioned in reviews): ${state.specialRequirements}`);
+  return lines.join('\n');
+}
+
 function buildPromptWithRealData(hotels) {
   const preferred = state.preferredHotel
     ? `★ PREFERRED HOTEL: "${state.preferredHotel}" — always include this hotel in your analysis regardless of price or location constraints.` : '';
@@ -962,6 +993,7 @@ SEARCH CONTEXT:
 - Currency: ${state.currency}
 - Types wanted: ${state.accommodationTypes.join(', ')}
 ${state.tripVibes.length ? '- Trip vibe / activities wanted: ' + state.tripVibes.map(t => VIBE_GROUPS.flatMap(g => g.items).find(i => i.type === t)?.label || t).join(', ') : ''}
+${buildCriteriaNote()}
 - MRT preference: ${state.maxMRTWalk === 'any' ? 'No restriction' : state.maxMRTWalk === 'walk' ? 'Walking distance only' : 'Within ' + state.maxMRTWalk}
 - Reviews: all properties below already have ≥${MIN_REVIEW_COUNT} Google reviews — when ranking pros/cons, favour the ones with both the highest review counts and the highest ratings.
 ${locationNote ? '- ' + locationNote : ''}
@@ -1022,6 +1054,7 @@ ${preferred}
 Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5 | Budget: ${state.minPrice}–${state.maxPrice} MYR/night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night) | Currency: ${state.currency}
 ${mrtNote}
 ${vibeNote}
+${buildCriteriaNote()}
 
 CRITICAL: Only include properties with at least ${MIN_REVIEW_COUNT} reviews. Among those, select the Top ${state.maxResults || 12} by prioritising the HIGHEST review count first, then the HIGHEST rating. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
 ${state.nearLocation && (state.minKm > 0 || state.maxKm < 50) ? `DISTANCE: Only include hotels ${state.minKm}–${state.maxKm}km from ${state.nearLocation}. Do NOT include ${state.nearLocation} itself. Focus on neighbourhoods at that distance.` : ''}
@@ -1394,6 +1427,11 @@ async function handleSearch(e) {
   state.accommodationTypes = [...document.querySelectorAll('.accom-pill.active')].map(el => el.dataset.type);
   if (!state.accommodationTypes.length) state.accommodationTypes = ['Hotel','Resort'];
   state.tripVibes = [...document.querySelectorAll('.vibe-pill.active')].map(el => el.dataset.type);
+  QUALITY_CRITERIA.forEach(c => {
+    const el = document.getElementById('qc-'+c.key);
+    state.qualityCriteria[c.key] = el ? el.checked : true;
+  });
+  state.specialRequirements = document.getElementById('special-requirements').value.trim();
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
   state.minPrice     = parseInt(document.getElementById('min-price').value);
   state.maxPrice     = parseInt(document.getElementById('max-price').value);
@@ -2486,6 +2524,20 @@ function toggleVibePill(el) {
 }
 
 // ═══════════════════════════════════════════════════
+// ADDITIONAL CRITERIA — checkboxes, default checked
+// ═══════════════════════════════════════════════════
+function buildQualityCheckboxes() {
+  const container = document.getElementById('quality-checkboxes');
+  if (!container) return;
+  container.innerHTML = QUALITY_CRITERIA.map(c => `
+    <label class="flex items-center gap-2.5 cursor-pointer select-none">
+      <input type="checkbox" id="qc-${c.key}" ${state.qualityCriteria[c.key] !== false ? 'checked' : ''}
+        class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"/>
+      <span class="text-[12px] font-bold text-slate-600">${c.label}</span>
+    </label>`).join('');
+}
+
+// ═══════════════════════════════════════════════════
 // SAVE / LOAD SEARCHES
 // ═══════════════════════════════════════════════════
 function getSavedSearches() {
@@ -2506,7 +2558,8 @@ function saveSearch() {
       accommodationTypes: [...state.accommodationTypes], tripVibes: [...state.tripVibes], maxMRTWalk: state.maxMRTWalk,
       minRating: state.minRating, minPrice: state.minPrice, maxPrice: state.maxPrice,
       currency: state.currency, minKm: state.minKm, maxKm: state.maxKm,
-      maxResults: state.maxResults
+      maxResults: state.maxResults,
+      qualityCriteria: { ...state.qualityCriteria }, specialRequirements: state.specialRequirements
     }
   });
   // Keep max 20 saved searches
@@ -2535,6 +2588,7 @@ function loadSearch(id) {
   document.getElementById('currency-select').value = p.currency || 'MYR';
   document.getElementById('min-radius').value      = p.minKm || 0;
   document.getElementById('max-radius').value      = p.maxKm || 15;
+  document.getElementById('special-requirements').value = p.specialRequirements || '';
   // Rebuild date pickers
   buildDatePicker('checkin-picker',  'Check-In Date',  p.checkIn,  'checkIn');
   buildDatePicker('checkout-picker', 'Check-Out Date', p.checkOut, 'checkOut');
@@ -2548,6 +2602,9 @@ function loadSearch(id) {
   // Rebuild trip vibe pills
   state.tripVibes = p.tripVibes || [];
   buildVibePills();
+  // Rebuild additional-criteria checkboxes
+  state.qualityCriteria = p.qualityCriteria || { renovated:true, quiet:true, cleanliness:true, modern:true, nonSmoking:true };
+  buildQualityCheckboxes();
   updateExchangeRateBadge([]);
   toast(`Loaded: ${item.name}`, 2000);
 }
@@ -2725,6 +2782,7 @@ function init() {
     if (state.accommodationTypes.includes(el.dataset.type)) el.classList.add('active');
   });
   buildVibePills();
+  buildQualityCheckboxes();
   // Wire district to also trigger currency detection
   document.getElementById('district').addEventListener('input', e => {
     autoDetectCurrency(document.getElementById('city').value + ' ' + e.target.value);
