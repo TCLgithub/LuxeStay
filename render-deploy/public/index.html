@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
   body { font-family: 'Inter', sans-serif; }
@@ -226,10 +227,10 @@
         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Max Distance to MRT</label>
         <select id="mrt-distance" onchange="state.maxMRTWalk=this.value"
           class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm cursor-pointer">
-          <option value="any">Any distance</option>
+          <option value="any" selected>Any distance</option>
           <option value="walk">Walking distance only</option>
           <option value="5min">Within 5 min walk</option>
-          <option value="10min" selected>Within 10 min walk</option>
+          <option value="10min">Within 10 min walk</option>
           <option value="15min">Within 15 min walk</option>
           <option value="1km">Within 1 km</option>
         </select>
@@ -240,13 +241,24 @@
         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Min Guest Rating</label>
         <select id="min-rating" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm cursor-pointer">
           <option value="3.0">3.0+ (Any)</option>
-          <option value="3.5" selected>3.5+</option>
-          <option value="4.0">4.0+</option>
+          <option value="3.5">3.5+</option>
+          <option value="4.0" selected>4.0+</option>
           <option value="4.2">4.2+</option>
           <option value="4.5">4.5+</option>
           <option value="4.7">4.7+</option>
         </select>
         <p class="text-[9px] text-slate-400 font-bold pt-0.5">Ranked by highest review count, then highest rating · min. 200 reviews required</p>
+      </div>
+
+      <!-- Min Room Size -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Min Room Size (m²)</label>
+        <input type="number" id="min-room-size" value="27" min="0" max="200" step="1"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"/>
+        <label class="flex items-center gap-2 pt-1 cursor-pointer select-none">
+          <input type="checkbox" id="use-room-rates" checked class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"/>
+          <span class="text-[10px] font-bold text-slate-500">Fetch live room-type rates for the Excel report (1 API credit per hotel)</span>
+        </label>
       </div>
 
       <!-- Max Results -->
@@ -293,6 +305,13 @@
           <div>
             <p class="text-[11px] font-black text-slate-600">AI Analysis</p>
             <p id="step-2-sub" class="text-[10px] text-slate-400">Prices, quality scores, pros/cons</p>
+          </div>
+        </div>
+        <div id="step-3" class="flex items-center gap-3">
+          <div class="step-icon pending">3</div>
+          <div>
+            <p class="text-[11px] font-black text-slate-600">Room-Type Rates</p>
+            <p id="step-3-sub" class="text-[10px] text-slate-400">Live rooms, sizes &amp; booking-site prices</p>
           </div>
         </div>
       </div>
@@ -374,6 +393,11 @@
           </button>
           <!-- Export buttons pushed right -->
           <div class="ml-auto flex gap-2 flex-shrink-0">
+            <button id="export-report-btn" onclick="exportLuxeReport()"
+              class="bg-amber-500 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-amber-600 shadow-lg transition-all active:scale-95 whitespace-nowrap">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 1.5v-1.5m0 0c0-.621.504-1.125 1.125-1.125m0 0h7.5"/></svg>
+              Report (Excel)
+            </button>
             <button id="save-results-btn" onclick="saveResults()"
               class="bg-slate-800 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-slate-900 shadow-lg transition-all active:scale-95 whitespace-nowrap">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2M7 12l5 5 5-5M12 17V3"/></svg>
@@ -602,11 +626,22 @@ const PROXY_MODE = (() => {
 // ═══════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════
+// Local-date helpers (toISOString would shift the day for timezones ahead of UTC)
+function _isoLocal(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function _monthFromToday() {
+  const t = new Date(), m = t.getMonth() + 1;
+  const last = new Date(t.getFullYear(), m + 1, 0).getDate();   // clamp 31 Jan → 28/29 Feb
+  return new Date(t.getFullYear(), m, Math.min(t.getDate(), last));
+}
+const _defaultCheckIn = _monthFromToday();
+const _defaultCheckOut = new Date(_defaultCheckIn.getFullYear(), _defaultCheckIn.getMonth(), _defaultCheckIn.getDate() + 3);
+
 let state = {
   city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '',
-  checkIn: '2026-06-30', checkOut: '2026-07-03',
-  accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 3.5,
-  minPrice: 500, maxPrice: 1500, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12,
+  checkIn: _isoLocal(_defaultCheckIn), checkOut: _isoLocal(_defaultCheckOut),
+  accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 4.0,
+  minRoomSize: 27, fetchRoomRates: true,
+  minPrice: 500, maxPrice: 1000, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12,
   qualityCriteria: { renovated:true, quiet:true, cleanliness:true, modern:true, nonSmoking:true },
   specialRequirements: ''
 };
@@ -718,7 +753,7 @@ function buildDatePicker(containerId, label, dateStr, field) {
       </select>
       <select data-field="${field}" data-part="year" onchange="syncDate('${containerId}','${field}')"
         class="bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-black outline-none focus:ring-2 focus:ring-blue-500/20 text-center cursor-pointer shadow-sm">
-        ${[2025,2026,2027].map(yr=>`<option value="${yr}"${yr===y?' selected':''}>${yr}</option>`).join('')}
+        ${[...new Set([new Date().getFullYear(), new Date().getFullYear()+1, new Date().getFullYear()+2, y])].sort().map(yr=>`<option value="${yr}"${yr===y?' selected':''}>${yr}</option>`).join('')}
       </select>
     </div>`;
 }
@@ -890,6 +925,7 @@ async function fetchRealHotels() {
 function buildCriteriaNote() {
   const checked = QUALITY_CRITERIA.filter(c => state.qualityCriteria[c.key] !== false).map(c => c.label);
   const lines = [];
+  if (state.minRoomSize > 0) lines.push(`- MINIMUM ROOM SIZE: ${state.minRoomSize} m². Only list room tiers of at least this size, and give "sizeM2" as a plain number of square metres (best known published size).`);
   if (checked.length) lines.push(`- Preferred qualities (favour hotels matching these; call it out in pros when reviews confirm it): ${checked.join(', ')}.`);
   if (state.specialRequirements) lines.push(`- SPECIAL REQUIREMENT (address directly for every hotel — confirm if met, or note if uncertain/not mentioned in reviews): ${state.specialRequirements}`);
   return lines.join('\n');
@@ -1301,6 +1337,13 @@ async function fetchLiveRates() {
   return window._liveRates;
 }
 
+// "35 m²", "35", 35 → 35; anything without a number → null (unknown)
+function parseSizeM2(v) {
+  if (typeof v === 'number') return v > 0 ? v : null;
+  const m = String(v ?? '').match(/\d+(\.\d+)?/);
+  return m && parseFloat(m[0]) > 0 ? parseFloat(m[0]) : null;
+}
+
 function _normHotelName(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\b(hotel|the|resort|and|by)\b/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1338,6 +1381,302 @@ function applyLiveRate(roomTypes, live, rateToMYR) {
     const myr = r.pricePerNight * rateToMYR;
     return { ...r, _live: r.pricePerNight === minPrice, _inBudget: !myr || (myr >= state.minPrice && myr <= state.maxPrice) };
   });
+}
+
+// ═══════════════════════════════════════════════════
+// ROOM-LEVEL RATES — real room types per booking site, filtered on budget + size
+// ═══════════════════════════════════════════════════
+const ROOM_LOOKUP_MAX = 12;   // hotels looked up per search (1 SerpApi credit each)
+const ROOMS_PER_HOTEL = 3;    // qualifying room types kept per hotel
+const REPORT_COLS = ['hotel', 'agoda', 'booking', 'trip'];
+
+function _srcCol(p) {
+  if (p.official) return 'hotel';
+  const s = (p.source || '').toLowerCase();
+  if (s.includes('agoda')) return 'agoda';
+  if (s.includes('booking')) return 'booking';
+  if (s.includes('trip')) return 'trip';
+  return null;   // other sites are not part of the report columns
+}
+
+const _ROOM_STOP = new Set(['room', 'rooms', 'with', 'the', 'a', 'and', 'of']);
+function _roomKey(name) {
+  const t = (name || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !_ROOM_STOP.has(w));
+  return [...new Set(t)].sort().join(' ');
+}
+
+// Same room offered under slightly different names by different sites → one room
+function groupRoomPlans(plans) {
+  const map = new Map();
+  for (const p of plans) {
+    const k = _roomKey(p.room);
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, { name: p.room, plans: [] });
+    map.get(k).plans.push(p);
+  }
+  return [...map.values()];
+}
+
+// Cheapest plan per (site, breakfast yes/no), as total for the stay, before taxes where available
+function buildRoomCells(plans, nights) {
+  const cells = {};
+  for (const p of plans) {
+    const col = _srcCol(p);
+    if (!col) continue;
+    const tot = p.totalPreTax > 0 ? p.totalPreTax : p.total > 0 ? p.total : (p.perNightPreTax || p.perNight || 0) * nights;
+    if (!(tot > 0)) continue;
+    const bf = p.breakfast ? 'bf' : 'no';
+    cells[col] = cells[col] || {};
+    const cur = cells[col][bf];
+    if (!cur || tot < cur.total) cells[col][bf] = { total: Math.round(tot), freeCancel: !!p.freeCancel, until: p.freeCancelUntil || null };
+  }
+  return cells;
+}
+
+function bestOfCells(cells) {
+  let best = null;
+  for (const col of Object.keys(cells)) for (const bf of Object.keys(cells[col])) {
+    const c = cells[col][bf];
+    if (!best || c.total < best.total) best = { ...c, bf };
+  }
+  return best;
+}
+
+async function fetchRoomPlans(hotel) {
+  const token = hotel.liveRate?.token;
+  if (!token) return null;
+  try {
+    const r = await fetch('/api/hotel-rooms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency })
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return Array.isArray(d.plans) ? d.plans : null;
+  } catch { return null; }
+}
+
+// Room size isn't in any booking-site feed, so ask the AI for published sizes (always labelled "est." in the UI/report)
+async function estimateRoomSizes(entries) {
+  const sizes = new Map();
+  if (!entries.length) return sizes;
+  const list = entries.map(e => `- ${e.hotel}: ${e.rooms.map(r => `"${r}"`).join('; ')}`).join('\n');
+  const prompt = `You are a hotel room-size expert. For each hotel and room type below, give the published (or best-known typical) room size in square metres. Use null only if you truly cannot estimate.
+
+${list}
+
+Return ONLY a valid JSON array, one item per hotel, using the exact hotel and room names given:
+[{"hotel":string,"rooms":[{"name":string,"sizeM2":number|null,"confidence":"high"|"medium"|"low"}]}]`;
+  try {
+    const { data } = await callWithFallback(prompt);
+    for (const item of data) {
+      const hotel = item.hotel || item.name || '';
+      for (const r of (Array.isArray(item.rooms) ? item.rooms : [])) {
+        sizes.set(`${hotel}|${r.name}`.toLowerCase(), { size: parseSizeM2(r.sizeM2), conf: r.confidence || null });
+      }
+    }
+  } catch { /* sizes stay unknown; rooms are then kept and flagged */ }
+  return sizes;
+}
+
+// Replace AI room guesses with real room types + prices; keep up to 3 per hotel that fit budget & size
+async function enrichRoomRates(hotels) {
+  const nights = getNights();
+  const targets = hotels.filter(h => h.liveRate?.token).slice(0, ROOM_LOOKUP_MAX);
+  if (!targets.length) { setStep(3, 'skip', 'No hotels with live room data'); return hotels; }
+
+  setStep(3, 'active', `Fetching room rates for ${targets.length} hotels…`);
+  setSearchStatus('Fetching live room-type rates…');
+  const fetched = new Map();
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
+    while (next < targets.length) { const h = targets[next++]; fetched.set(h, await fetchRoomPlans(h)); }
+  }));
+
+  const grouped = [];
+  for (const h of targets) {
+    const plans = fetched.get(h);
+    if (!plans?.length) continue;
+    const rooms = groupRoomPlans(plans)
+      .map(g => ({ name: g.name, cells: buildRoomCells(g.plans, nights) }))
+      .filter(r => Object.keys(r.cells).length);
+    if (rooms.length) grouped.push({ h, rooms });
+  }
+  if (!grouped.length) { setStep(3, 'err', 'No room-level data returned'); return hotels; }
+
+  setSearchStatus('Estimating room sizes…');
+  const sizes = await estimateRoomSizes(grouped.map(g => ({ hotel: g.h.name, rooms: g.rooms.map(r => r.name) })));
+
+  window._filterDiag = window._filterDiag || [];
+  const dropped = new Set();
+  for (const { h, rooms } of grouped) {
+    const rate = h.exchangeRateToMYR || KNOWN_RATES[state.currency] || 1;
+    const all = rooms.map(r => {
+      const sz = sizes.get(`${h.name}|${r.name}`.toLowerCase());
+      const best = bestOfCells(r.cells);
+      const night = best.total / nights;
+      return { name: r.name, size: sz?.size ?? null, sizeConf: sz?.conf ?? null, cells: r.cells,
+               bestNight: Math.round(night), bestNightMYR: night * rate,
+               bestBf: best.bf === 'bf', bestFree: best.freeCancel, bestUntil: best.until };
+    });
+    const fits = all
+      .filter(r => r.bestNightMYR >= state.minPrice && r.bestNightMYR <= state.maxPrice && (r.size == null || r.size >= state.minRoomSize))
+      .sort((a, b) => a.bestNight - b.bestNight)
+      .slice(0, ROOMS_PER_HOTEL);
+    h.rooms = fits;
+    h.roomsFound = all.length;
+    h.roomTypes = fits.map(r => ({
+      type: r.name, sizeM2: r.size ? `~${r.size} m²` : '—', breakfastIncluded: r.bestBf,
+      cancellationPolicy: r.bestFree ? (r.bestUntil ? `Free cancel until ${r.bestUntil}` : 'Free cancel') : 'Non-refundable',
+      pricePerNight: r.bestNight, _inBudget: true, _live: true
+    }));
+    if (!fits.length && !h._isPreferred && !matchesPref(h.name)) {
+      dropped.add(h);
+      window._filterDiag.push({ name: h.name, reason: `none of ${all.length} room types fit RM${state.minPrice}–${state.maxPrice}/night and ≥${state.minRoomSize} m²` });
+    }
+  }
+  const kept = grouped.length - dropped.size;
+  setStep(3, 'done', `${kept} hotels with qualifying rooms (${dropped.size} dropped: no room fits)`);
+  return hotels.filter(h => !dropped.has(h));
+}
+
+// ═══════════════════════════════════════════════════
+// EXCEL REPORT — LuxeStay report format (ExcelJS)
+// ═══════════════════════════════════════════════════
+function _fmtStayRange(ci, co) {
+  const a = new Date(ci + 'T00:00:00'), b = new Date(co + 'T00:00:00');
+  if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()) return `${a.getDate()} - ${b.getDate()} ${MONTHS[b.getMonth()]} ${b.getFullYear()}`;
+  if (a.getFullYear() === b.getFullYear()) return `${a.getDate()} ${MONTHS[a.getMonth()]} - ${b.getDate()} ${MONTHS[b.getMonth()]} ${b.getFullYear()}`;
+  return `${a.getDate()} ${MONTHS[a.getMonth()]} ${a.getFullYear()} - ${b.getDate()} ${MONTHS[b.getMonth()]} ${b.getFullYear()}`;
+}
+
+async function exportLuxeReport() {
+  if (typeof ExcelJS === 'undefined') { toast('Excel library still loading — try again in a moment', 3500); return; }
+  const hotels = results.filter(h => h.rooms?.length);
+  if (!hotels.length) {
+    toast('No hotels with room-level rates yet — tick "Fetch live room-type rates" and search again', 5000);
+    return;
+  }
+  const nights = getNights();
+  const fx = Number((KNOWN_RATES[state.currency] || 1).toFixed(4));
+  const toMYR = v => state.currency === 'MYR' ? v : { formula: `${v}*${fx}`, result: Math.round(v * fx * 100) / 100 };
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  const FONT = { name: 'Aptos Narrow', size: 11 };
+  const NUM = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-';
+  const YEL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+  const GRN = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
+  const COL = { hotel: 'H', agoda: 'I', booking: 'J', trip: 'K' };
+  const put = (addr, value, o = {}) => {
+    const c = ws.getCell(addr);
+    c.value = value;
+    c.font = { ...FONT, ...(o.font || {}) };
+    if (o.center) c.alignment = { horizontal: 'center' };
+    if (o.fmt) c.numFmt = o.fmt;
+    if (o.fill) c.fill = o.fill;
+    if (o.note) c.note = o.note;
+    return c;
+  };
+
+  ws.getColumn('A').width = 32;
+  ws.getColumn('D').width = 30;
+  ['H', 'I', 'J', 'K'].forEach(c => { ws.getColumn(c).width = 15; });
+  ws.getColumn('M').width = 12;
+
+  const crit = [`rating ≥ ${Number(state.minRating).toFixed(1)}`, `budget RM${state.minPrice}-${state.maxPrice}/night`, `room ≥ ${state.minRoomSize} m²`,
+                state.maxMRTWalk === 'any' ? 'any distance to MRT' : `MRT ${state.maxMRTWalk}`].join(' · ');
+  put('A1', `LuxeStay report · generated ${_isoLocal(new Date())} · ${crit} · prices in MYR (${state.currency} × ${fx})`, { font: { italic: true, size: 9 } });
+  put('A2', 'Totals for the stay, plus taxes · green = free cancellation (see cell note), other prices non-refundable · M sq = AI-estimated room size (verify) · yellow = top pick / best price', { font: { italic: true, size: 9 } });
+  put('A3', `Hotel - ${state.district || state.city}`, { font: { bold: true } });
+  put('A4', `${_fmtStayRange(state.checkIn, state.checkOut)}  (${nights} night${nights > 1 ? 's' : ''})`);
+  put('H4', 'Hotel', { center: true }); put('I4', 'Agoda', { center: true }); put('J4', 'Booking', { center: true }); put('K4', 'Trip', { center: true });
+  put('C5', 'Location', { center: true }); put('C6', 'score', { center: true });
+  put('G5', 'M sq', { center: true });
+  ['H', 'I', 'J', 'K'].forEach(c => put(c + '5', 'Plus taxes', { center: true }));
+  ws.mergeCells('L5:M5'); put('L5', 'Breakfast', { center: true });
+
+  const colStat = { hotel: { free: 0, non: 0 }, agoda: { free: 0, non: 0 }, booking: { free: 0, non: 0 }, trip: { free: 0, non: 0 } };
+  const topPick = hotels.find(h => h._isPreferred) || hotels[0];
+  let r = 8;
+
+  for (const h of hotels) {
+    const notes = [`Google ★${h.guestRating} (${(h.reviewCount || 0).toLocaleString()} reviews) · LuxeScore ${h.compositeScore}/10${h._isPreferred ? ' · ★ Preferred' : ''}`];
+    if (h.distKm != null && state.nearLocation) notes.push(`${h.distKm.toFixed(1)} km from ${state.nearLocation}`);
+    const px = h.proximity || {};
+    if (px.mrt && px.mrt !== '—') notes.push(`Transit: ${px.mrt}`);
+    (h.pros || []).forEach(p => notes.push(p));
+    (h.cons || []).forEach(c => notes.push(`Con: ${c}`));
+
+    const height = Math.max(h.rooms.length * 2, notes.length, 2);
+    const isTop = h === topPick;
+    const fill = isTop ? YEL : undefined;
+
+    // Hotel name: one line, or split over two rows like the template when long
+    let l1 = h.name, l2 = '';
+    if (h.name.length > 32) {
+      const cut = h.name.lastIndexOf(' ', 32);
+      l1 = h.name.slice(0, cut > 0 ? cut : 32); l2 = h.name.slice(l1.length).trim();
+    }
+    put(`A${r}`, l1, { fill });
+    put(`A${r + 1}`, l2 || null, { fill });
+    const locScore = h.liveRate?.locationRating ?? h.reviewMetrics?.transitProximity?.rating;
+    put(`C${r}`, locScore || null, { center: true, fmt: '0.0', fill });
+    if (isTop) ['B', 'E', 'F'].forEach(c => put(`${c}${r}`, null, { fill }));
+
+    h.rooms.forEach((room, k) => {
+      const rr = r + k * 2;
+      put(`D${rr}`, room.name, { fill: isTop && k === 0 ? YEL : undefined });
+      put(`G${rr}`, room.size || null, { center: true, fmt: '0', fill: isTop && k === 0 ? YEL : undefined });
+      let bothKey = null;   // first site that offers this room both with and without breakfast
+      ['no', 'bf'].forEach((bf, i) => {
+        const row = rr + i;
+        let any = false;
+        for (const col of REPORT_COLS) {
+          const cell = room.cells[col]?.[bf];
+          if (!cell) continue;
+          any = true;
+          colStat[col][cell.freeCancel ? 'free' : 'non']++;
+          const cheapest = isTop && k === 0 && cell.total === Math.min(...REPORT_COLS.flatMap(c => ['no', 'bf'].map(b => room.cells[c]?.[b]?.total ?? Infinity)));
+          put(`${COL[col]}${row}`, toMYR(cell.total), {
+            fmt: NUM, fill: cheapest ? YEL : cell.freeCancel ? GRN : undefined,
+            note: cell.freeCancel ? `Free cancellation${cell.until ? ' until ' + cell.until : ''}` : undefined
+          });
+          if (bf === 'bf' && room.cells[col]?.no && !bothKey) bothKey = col;
+        }
+        put(`L${row}`, any ? (bf === 'bf' ? 'Yes' : 'No') : null, { center: true });
+      });
+      if (bothKey) {
+        const L = COL[bothKey], c = room.cells[bothKey];
+        const diff = ((c.bf.total - c.no.total) / nights) * (state.currency === 'MYR' ? 1 : fx);
+        put(`M${rr + 1}`, { formula: `(${L}${rr + 1}-${L}${rr})/${nights}`, result: Math.round(diff * 100) / 100 }, { fmt: NUM });
+      }
+    });
+
+    notes.slice(0, height).forEach((n, i) => put(`O${r + i}`, n));
+    r += height + 2;
+  }
+
+  // Cancellation header per source column
+  for (const col of REPORT_COLS) {
+    const s = colStat[col];
+    const label = !s.free && !s.non ? '' : !s.free ? 'Non refund' : !s.non ? 'Free cancel' : 'Mixed*';
+    put(`${COL[col]}6`, label || null, { center: true });
+  }
+
+  const missing = results.filter(h => !h.rooms?.length).map(h => h.name);
+  if (missing.length) {
+    put(`A${r}`, 'Not shown (no live room-level rates, AI estimates only — check manually):', { font: { italic: true } });
+    missing.forEach((n, i) => put(`A${r + 1 + i}`, n, { font: { italic: true } }));
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  a.download = `LuxeStay_${(state.district || state.city).replace(/[^\w]+/g, '_')}_${state.checkIn}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast(`✓ Report exported: ${hotels.length} hotels`, 3000);
 }
 
 function filterAndScore(data) {
@@ -1382,7 +1721,15 @@ function filterAndScore(data) {
     const distKm = (_nearLat && pLat && pLng)
       ? haversineKm(_nearLat, _nearLng, pLat, pLng)
       : null;
-    const finalRooms = live ? applyLiveRate(roomTypes, live, rate) : roomTypes;
+    // AI-estimated room sizes only decide when real room-level data won't follow;
+    // otherwise the real room list (fetched after this step) is filtered on size instead
+    const realRoomsFollow = !!(live?.token && state.fetchRoomRates && PROXY_MODE);
+    let aiRooms = roomTypes, sizeDropped = 0;
+    if (!realRoomsFollow && state.minRoomSize > 0) {
+      aiRooms = roomTypes.filter(r => { const s = parseSizeM2(r.sizeM2); return s == null || s >= state.minRoomSize; });
+      sizeDropped = roomTypes.length - aiRooms.length;
+    }
+    const finalRooms = (live && !(sizeDropped && !aiRooms.length)) ? applyLiveRate(aiRooms, live, rate) : aiRooms;
 
     return {
       ...h,
@@ -1392,7 +1739,8 @@ function filterAndScore(data) {
       lng: coords?.lng || live?.lng || null,
       distKm,
       roomTypes: finalRooms,
-      liveRate: live ? { rate: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency } : null,
+      liveRate: live ? { rate: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency, token: live.token || null, locationRating: live.locationRating ?? null } : null,
+      _sizeDropped: sizeDropped,
       _excluded: null
     };
   });
@@ -1404,7 +1752,7 @@ function filterAndScore(data) {
     // Preferred hotel always passes all filters
     if (matchesPref(h.name)) { h._isPreferred = true; return; }
 
-    if (!h.roomTypes.length) { h._excluded = 'no room data'; return; }
+    if (!h.roomTypes.length) { h._excluded = h._sizeDropped ? `no room type ≥ ${state.minRoomSize} m²` : 'no room data'; return; }
 
     if ((h.guestRating || 0) < state.minRating) {
       h._excluded = `rating ${h.guestRating} below min ${state.minRating}`;
@@ -1507,6 +1855,8 @@ async function handleSearch(e) {
   });
   state.specialRequirements = document.getElementById('special-requirements').value.trim();
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
+  state.minRoomSize  = Math.max(0, parseFloat(document.getElementById('min-room-size').value) || 0);
+  state.fetchRoomRates = document.getElementById('use-room-rates').checked;
   state.minPrice     = parseInt(document.getElementById('min-price').value);
   state.maxPrice     = parseInt(document.getElementById('max-price').value);
   state.maxResults   = parseInt(document.getElementById('max-results').value);
@@ -1519,6 +1869,7 @@ async function handleSearch(e) {
   document.getElementById('fb-log').classList.add('hidden');
   document.getElementById('fb-entries').innerHTML = '';
   setStep(1,'active'); setStep(2,'pending','Prices, quality scores, pros/cons');
+  setStep(3,'pending','Live rooms, sizes & booking-site prices');
 
   // Geocode the reference landmark so distance filtering works
   if (state.nearLocation) await geocodeNearLocation();
@@ -1632,6 +1983,20 @@ async function handleSearch(e) {
     }
     setStep(2,'done',`${results.length} hotels via ${P_LABELS[provider]}`);
     toast(`✓ ${results.length} properties analysed via ${P_LABELS[provider]}`, 3000);
+
+    // ── Step 3: real room types + prices per booking site, filtered on budget & room size ──
+    if (state.fetchRoomRates && PROXY_MODE) {
+      try { results = await enrichRoomRates(results); }
+      catch (e) { setStep(3,'err', e.message.slice(0,40)); }
+      if (results.length === 0) {
+        const diag = (window._filterDiag || []).filter(d => d.reason.startsWith('none of'));
+        throw new Error(`No hotel has a room type matching RM${state.minPrice}–${state.maxPrice}/night and ≥${state.minRoomSize} m².` +
+          (diag.length ? ` e.g. ${diag.slice(0,3).map(d => `${d.name} (${d.reason})`).join('; ')}.` : '') +
+          ' Try a lower minimum room size or a wider budget.');
+      }
+    } else {
+      setStep(3,'skip', PROXY_MODE ? 'Room-level rates switched off' : 'Needs the hosted app (server-side key)');
+    }
 
     // Update header badge
     const badge = document.getElementById('data-source-badge');
@@ -1880,7 +2245,9 @@ function renderComparisonTable(hotel, nights) {
     ${hotel.liveRate ? `
     <div class="bg-emerald-50/70 border-b border-emerald-100 px-4 py-2 flex items-center gap-2 flex-wrap">
       <span class="badge-real">Live Rate</span>
-      <span class="text-[10px] text-slate-600">Google Hotels, ${nights} night${nights>1?'s':''}: from <b>${fmtPrice(hotel.liveRate.rate, cur)}</b>/night${hotel.liveRate.totalRate ? ` (${fmtPrice(hotel.liveRate.totalRate, cur)} total)` : ''}. Other room tiers are scaled estimates.</span>
+      <span class="text-[10px] text-slate-600">${hotel.rooms?.length
+        ? `Real room-type rates from booking sites (cheapest per night, plus taxes). Room sizes are AI estimates. Use <b>Report (Excel)</b> for the per-site breakdown.`
+        : `Google Hotels, ${nights} night${nights>1?'s':''}: from <b>${fmtPrice(hotel.liveRate.rate, cur)}</b>/night${hotel.liveRate.totalRate ? ` (${fmtPrice(hotel.liveRate.totalRate, cur)} total)` : ''}. Other room tiers are scaled estimates.`}</span>
       ${(hotel.liveRate.offers||[]).filter(o=>o.rate>0).map(o => `<span class="text-[9px] bg-white border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-lg font-black">${String(o.source||'').replace(/[<>&"']/g,'')} ${fmtPrice(o.rate, cur)}${o.freeCancel ? ' · free cancel' : ''}</span>`).join('')}
     </div>` : `
     <div class="bg-amber-50/60 border-b border-amber-100 px-4 py-2 flex items-center gap-2">
@@ -2646,7 +3013,7 @@ function saveSearch() {
       accommodationTypes: [...state.accommodationTypes], tripVibes: [...state.tripVibes], maxMRTWalk: state.maxMRTWalk,
       minRating: state.minRating, minPrice: state.minPrice, maxPrice: state.maxPrice,
       currency: state.currency, minKm: state.minKm, maxKm: state.maxKm,
-      maxResults: state.maxResults,
+      maxResults: state.maxResults, minRoomSize: state.minRoomSize,
       qualityCriteria: { ...state.qualityCriteria }, specialRequirements: state.specialRequirements
     }
   });
@@ -2669,7 +3036,9 @@ function loadSearch(id) {
   document.getElementById('near-location').value   = p.nearLocation || '';
   document.getElementById('preferred-hotel').value = p.preferredHotel || '';
   document.getElementById('mrt-distance').value    = p.maxMRTWalk || 'any';
-  document.getElementById('min-rating').value      = p.minRating || 4.5;
+  document.getElementById('min-rating').value      = Number(p.minRating || 4.0).toFixed(1);
+  document.getElementById('min-room-size').value   = p.minRoomSize ?? 27;
+  state.minRoomSize = p.minRoomSize ?? 27;
   document.getElementById('min-price').value       = p.minPrice || 500;
   document.getElementById('max-price').value       = p.maxPrice || 1000;
   document.getElementById('max-results').value     = p.maxResults || 12;
@@ -2860,9 +3229,12 @@ function init() {
   if (minRSel) minRSel.value = state.minKm;
   if (maxRSel) maxRSel.value = state.maxKm;
   document.getElementById('max-results').value     = state.maxResults;
-  document.getElementById('min-rating').value       = state.minRating;
+  document.getElementById('min-rating').value       = Number(state.minRating).toFixed(1);
+  document.getElementById('min-room-size').value    = state.minRoomSize;
+  document.getElementById('use-room-rates').checked = state.fetchRoomRates;
   document.getElementById('min-price').value        = state.minPrice;
   document.getElementById('max-price').value        = state.maxPrice;
+  document.getElementById('mrt-distance').value     = state.maxMRTWalk;
   updateExchangeRateBadge([]); // show approximate rate on load
   buildAccomPills();
   // Mark initially-active pills

@@ -225,12 +225,76 @@ app.post('/api/hotel-rates', async (req, res) => {
       totalRate: p.total_rate?.extracted_lowest ?? null,
       rating: p.overall_rating ?? null,
       reviews: p.reviews ?? null,
+      locationRating: p.location_rating ?? null,
+      token: p.property_token || null,
       offers: (p.prices || []).slice(0, 5).map(o => ({
         source: o.source, rate: o.rate_per_night?.extracted_lowest ?? null, freeCancel: !!o.free_cancellation
       }))
     }));
     rateCache.set(cacheKey, { ts: Date.now(), properties });
     res.json({ properties });
+  } catch (e) {
+    res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
+  }
+});
+
+// ── Room-level rates for one hotel (SerpApi Google Hotels property details) ─
+// 1 SerpApi credit per call; cached 6h per property/dates/currency.
+const roomCache = new Map();
+
+app.post('/api/hotel-rooms', async (req, res) => {
+  const key = process.env.SERPAPI_KEY || '';
+  if (!key) return res.status(503).json({ error: 'SERPAPI_KEY not configured' });
+
+  const { token, checkIn, checkOut, currency = 'USD', adults = 2 } = req.body || {};
+  const dateOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  if (typeof token !== 'string' || !token || token.length > 400 || !dateOk(checkIn) || !dateOk(checkOut)) {
+    return res.status(400).json({ error: 'token, checkIn and checkOut (YYYY-MM-DD) are required' });
+  }
+  const cur = String(currency).toUpperCase().slice(0, 3);
+  const nAdults = Math.min(Math.max(parseInt(adults) || 2, 1), 8);
+
+  const cacheKey = [token, checkIn, checkOut, cur, nAdults].join('|');
+  const hit = roomCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < RATE_TTL_MS) return res.json({ ...hit.data, cached: true });
+
+  try {
+    const params = new URLSearchParams({
+      engine: 'google_hotels', property_token: token, q: 'hotel', check_in_date: checkIn, check_out_date: checkOut,
+      adults: String(nAdults), currency: cur, hl: 'en', api_key: key
+    });
+    const r = await fetch('https://serpapi.com/search.json?' + params);
+    const data = await r.json();
+    if (!r.ok || data.error) {
+      return res.status(502).json({ error: 'SerpApi error', detail: String(data.error || r.status).split(key).join('***').slice(0, 200) });
+    }
+    // Flatten source → room → rate plan into one list of plans
+    const plans = [];
+    for (const src of data.featured_prices || []) {
+      for (const room of src.rooms || []) {
+        const rates = Array.isArray(room.rates) && room.rates.length ? room.rates : [room];
+        for (const rt of rates) {
+          plans.push({
+            source: src.source, official: !!src.official, room: room.name,
+            breakfast: !!rt.breakfast_included,
+            freeCancel: !!rt.free_cancellation, freeCancelUntil: rt.free_cancellation_until_date || null,
+            perNight: rt.rate_per_night?.extracted_lowest ?? null,
+            perNightPreTax: rt.rate_per_night?.extracted_before_taxes_fees ?? null,
+            total: rt.total_rate?.extracted_lowest ?? null,
+            totalPreTax: rt.total_rate?.extracted_before_taxes_fees ?? null,
+            beds: (rt.beds || room.beds || []).map(b => `${b.count || 1} ${b.type}`).join(', ') || null
+          });
+        }
+      }
+    }
+    const out = {
+      name: data.name || null,
+      hotelClass: data.extracted_hotel_class ?? null,
+      locationRating: data.location_rating ?? null,
+      plans: plans.filter(p => p.room && (p.total > 0 || p.totalPreTax > 0 || p.perNight > 0))
+    };
+    roomCache.set(cacheKey, { ts: Date.now(), data: out });
+    res.json(out);
   } catch (e) {
     res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
   }
