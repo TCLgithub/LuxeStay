@@ -931,6 +931,12 @@ function buildCriteriaNote() {
   return lines.join('\n');
 }
 
+// Hard area requirement shared by both prompts (Google Places treats "Puxi"/"Orchard" etc. loosely)
+function buildAreaRule() {
+  if (!state.district) return '';
+  return `REQUIRED AREA: "${state.district}" in ${state.city}. Judge every hotel by its address and your geographic knowledge. If the area is a loose region (for example "Puxi"), include every district that belongs to it and nothing else. A hotel outside the area (for example a Pudong hotel when the area is Puxi) MUST be left out of your output entirely.`;
+}
+
 function buildPromptWithRealData(hotels) {
   const preferred = state.preferredHotel
     ? `★ PREFERRED HOTEL: "${state.preferredHotel}" — always include this hotel in your analysis regardless of price or location constraints.` : '';
@@ -969,7 +975,7 @@ function buildPromptWithRealData(hotels) {
     return true;
   });
 
-  const cap = Math.min(eligible.length, (state.maxResults || 12) + 8);
+  const cap = Math.min(eligible.length, ((state.maxResults || 12) + 8) * (state.district ? 2 : 1));
   // Rank by review volume first (most-reviewed = most trusted), rating as tie-breaker
   const topHotels = [...eligible].sort((a, b) =>
     (b.reviewCount || 0) - (a.reviewCount || 0) || (b.rating || 0) - (a.rating || 0)
@@ -1028,6 +1034,7 @@ YOUR TASK — analyse each hotel above and produce:
 
 SEARCH CONTEXT:
 - Location: ${state.city}${state.district ? ', ' + state.district : ''}${state.nearLocation ? ' (near ' + state.nearLocation + ')' : ''}
+${state.district ? '- ' + buildAreaRule() : ''}
 - Dates: ${state.checkIn} to ${state.checkOut}
 - Budget: ${state.minPrice}–${state.maxPrice} MYR per night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night)
 - Currency: ${state.currency}
@@ -1046,7 +1053,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 
 1. ROOM TYPES (2–3 tiers per hotel: Standard/Deluxe/Suite). Single realistic AI-estimated price per room in ${state.currency}/night based on Booking.com/Agoda market rates for ${state.city} around ${state.checkIn}.
    ➜ exchangeRateToMYR: must be ~${KNOWN_RATES[state.currency]||1} (1 ${state.currency} in MYR)
-   ➜ Budget context: ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. Analyse ALL hotels listed — app filters automatically.
+   ➜ Budget context: ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. Analyse every in-area hotel listed — app filters automatically.
 
 2. QUALITATIVE RATINGS (rate 1.0–5.0, one decimal, based on reviews — NO summary text needed):
    staffFriendliness | overallCondition | cleanliness | transitProximity | acPerformance
@@ -1060,7 +1067,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 8. BOOKING LINKS: URLs for booking.com, agoda, trip.com, hotels.com, expedia, tripadvisor.
 
 IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from real data above.
-Analyse ALL ${topHotels.length} hotels and return results for every one. Prices are estimates for research.
+${state.district ? `Analyse the ${topHotels.length} hotels above but return results ONLY for those inside "${state.district}" — omit the rest.` : `Analyse ALL ${topHotels.length} hotels and return results for every one.`} Prices are estimates for research.
 ${state.preferredHotel ? `MANDATORY: "${state.preferredHotel}" marked ★PREFERRED above MUST appear in your JSON output. Do not omit it under any circumstances.` : ''}
 
 Return ONLY a valid JSON array (no markdown, no explanation):
@@ -1068,6 +1075,8 @@ Return ONLY a valid JSON array (no markdown, no explanation):
   "name": string,
   "type": "Hotel"|"Resort"|"Villa",
   "stars": number,
+  "area": string,
+  "inRequestedArea": boolean,
   "guestRating": number,
   "reviewCount": number,
   "carParkAvailable": boolean,
@@ -1094,6 +1103,7 @@ ${preferred}
 Types: ${state.accommodationTypes.join(', ')} | Min rating: ${state.minRating}/5 | Budget: ${state.minPrice}–${state.maxPrice} MYR/night (≈ ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night) | Currency: ${state.currency}
 ${mrtNote}
 ${vibeNote}
+${buildAreaRule()}
 ${buildCriteriaNote()}
 
 CRITICAL: Only include properties with at least ${MIN_REVIEW_COUNT} reviews. Among those, select the Top ${state.maxResults || 12} by prioritising the HIGHEST review count first, then the HIGHEST rating. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
@@ -1104,7 +1114,7 @@ EXCHANGE RATE (do NOT invert): "exchangeRateToMYR" = how many MYR for 1 ${state.
 For each property provide: minimum 3 room types (Standard/Deluxe/Suite tiers) with realistic market prices on each platform in ${state.currency} (use rates visible on Booking.com/Agoda for ${state.city}), 10-factor qualitative analysis (1–5 + 1-sentence summary each), 3–4 pros, 2–3 cons, profile recommendations (Business/Family/Budget/Light Sleeper), proximity with exact MRT station name and distance, parking, booking links, exchangeRateToMYR (~${KNOWN_RATES[state.currency]||1}).
 
 Return ONLY a valid JSON array matching this schema:
-[{"name":string,"type":"Hotel"|"Resort"|"Villa","stars":number,"guestRating":number,"reviewCount":number,"carParkAvailable":boolean,"exchangeRateToMYR":number,"roomTypes":[{"type":string,"sizeM2":string,"breakfastIncluded":boolean,"cancellationPolicy":string,"prices":{"official":number,"booking":number,"agoda":number,"trip":number,"expedia":number}}],"reviewMetrics":{"staffFriendliness":{"rating":number,"summary":string},"overallCondition":{"rating":number,"summary":string},"cleanliness":{"rating":number,"summary":string},"transitProximity":{"rating":number,"summary":string},"acPerformance":{"rating":number,"summary":string},"noiseLevel":{"rating":number,"summary":string},"soundproofing":{"rating":number,"summary":string},"roomComfort":{"rating":number,"summary":string},"bathroomCondition":{"rating":number,"summary":string},"maintenanceQuality":{"rating":number,"summary":string}},"profileRecommendations":{"business":string,"family":string,"budget":string,"lightSleeper":string},"proximity":{"mrt":string,"beach":string,"airport":string},"pros":[string],"cons":[string],"links":{"booking":string,"agoda":string,"trip":string,"hotels":string,"expedia":string,"tripadvisor":string}}]`;
+[{"name":string,"type":"Hotel"|"Resort"|"Villa","stars":number,"area":string,"inRequestedArea":boolean,"guestRating":number,"reviewCount":number,"carParkAvailable":boolean,"exchangeRateToMYR":number,"roomTypes":[{"type":string,"sizeM2":string,"breakfastIncluded":boolean,"cancellationPolicy":string,"prices":{"official":number,"booking":number,"agoda":number,"trip":number,"expedia":number}}],"reviewMetrics":{"staffFriendliness":{"rating":number,"summary":string},"overallCondition":{"rating":number,"summary":string},"cleanliness":{"rating":number,"summary":string},"transitProximity":{"rating":number,"summary":string},"acPerformance":{"rating":number,"summary":string},"noiseLevel":{"rating":number,"summary":string},"soundproofing":{"rating":number,"summary":string},"roomComfort":{"rating":number,"summary":string},"bathroomCondition":{"rating":number,"summary":string},"maintenanceQuality":{"rating":number,"summary":string}},"profileRecommendations":{"business":string,"family":string,"budget":string,"lightSleeper":string},"proximity":{"mrt":string,"beach":string,"airport":string},"pros":[string],"cons":[string],"links":{"booking":string,"agoda":string,"trip":string,"hotels":string,"expedia":string,"tripadvisor":string}}]`;
 }
 
 // ═══════════════════════════════════════════════════
@@ -1630,6 +1640,7 @@ async function exportLuxeReport() {
 
   const hotelNotes = h => {
     const notes = [`Google ★${h.guestRating} (${(h.reviewCount || 0).toLocaleString()} reviews) · LuxeScore ${h.compositeScore}/10${h._isPreferred ? ' · ★ Preferred' : ''}`];
+    if (h.area) notes.push(`Area: ${h.area}`);
     if (h.distKm != null && state.nearLocation) notes.push(`${h.distKm.toFixed(1)} km from ${state.nearLocation}`);
     const px = h.proximity || {};
     if (px.mrt && px.mrt !== '—') notes.push(`Transit: ${px.mrt}`);
@@ -1820,6 +1831,11 @@ function filterAndScore(data) {
     if (matchesPref(h.name)) { h._isPreferred = true; return; }
 
     if (!h.roomTypes.length) { h._excluded = h._sizeDropped ? `no room type ≥ ${state.minRoomSize} m²` : 'no room data'; return; }
+
+    if (state.district && (h.inRequestedArea === false || String(h.inRequestedArea).toLowerCase() === 'false')) {
+      h._excluded = `outside requested area "${state.district}"${h.area ? ` (it is in ${h.area})` : ''}`;
+      return;
+    }
 
     if ((h.guestRating || 0) < state.minRating) {
       h._excluded = `rating ${h.guestRating} below min ${state.minRating}`;
