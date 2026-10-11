@@ -166,12 +166,18 @@
         </div>
       </div>
 
-      <!-- Preferred Hotel -->
+      <!-- Preferred Hotels (up to 3) -->
       <div class="space-y-1">
-        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Preferred Hotel <span class="font-normal normal-case">(optional)</span></label>
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Preferred Hotels <span class="font-normal normal-case">(optional, up to 3 — always included and looked up by name)</span></label>
         <input type="text" id="preferred-hotel"
           class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
-          placeholder="e.g. Grand Hyatt"/>
+          placeholder="1. e.g. Grand Hyatt"/>
+        <input type="text" id="preferred-hotel-2"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+          placeholder="2."/>
+        <input type="text" id="preferred-hotel-3"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+          placeholder="3."/>
       </div>
 
       <!-- Dates -->
@@ -251,6 +257,10 @@
         <input type="number" id="min-reviews" value="200" min="0" step="10"
           class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"/>
         <p class="text-[9px] text-slate-400 font-bold pt-0.5">Ranked by highest review count, then highest rating. Hotels reviewed mainly on Chinese sites often have few Google reviews: lower this to include them.</p>
+        <label class="flex items-center gap-2 pt-1 cursor-pointer select-none">
+          <input type="checkbox" id="use-trip-reviews" checked class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"/>
+          <span class="text-[10px] font-bold text-slate-500">Also count Trip.com reviews for popularity (shown for hotels looked up individually)</span>
+        </label>
       </div>
 
       <!-- Min Room Size -->
@@ -499,12 +509,12 @@ function editDist(a, b) {
 // Preferred-hotel match — brand-word edit distance tolerates 1-char typos.
 // "Oasis Hotel Novena" correctly matches "Oasia Hotel Novena" (brand dist=1)
 // but does NOT match "Holiday Inn Express Novena" (brand dist=6).
-function matchesPref(hotelName) {
+function matchesOnePref(hotelName, pref) {
   const n = (hotelName || '').toLowerCase();
-  const p = (state.preferredHotel || '').toLowerCase().trim();
+  const p = (pref || '').toLowerCase().trim();
   if (!p) return false;
   if (n.includes(p)) return true;                         // exact typed match
-  const canon = (window._prefCanonical || '').toLowerCase();
+  const canon = ((window._prefCanonicals || {})[p] || '').toLowerCase();
   if (canon && n.includes(canon)) return true;            // canonical Google name
   // Brand-word edit distance: extract first significant (non-generic) word from each name
   const GENERIC = new Set(['hotel','resort','inn','the','and','by','at','de','suites','suite','express','studios','spa']);
@@ -512,6 +522,9 @@ function matchesPref(hotelName) {
   const pBrand = brand(p);
   const nBrand = brand(n);
   return !!(pBrand && nBrand && editDist(pBrand, nBrand) <= 1);
+}
+function matchesPref(hotelName) {
+  return (state.preferredHotels || []).some(p => matchesOnePref(hotelName, p));
 }
 
 // Fetch live exchange rates (base MYR) — updates KNOWN_RATES in-place, cached 12 h
@@ -644,7 +657,7 @@ const _defaultCheckIn = _monthFromToday();
 const _defaultCheckOut = new Date(_defaultCheckIn.getFullYear(), _defaultCheckIn.getMonth(), _defaultCheckIn.getDate() + 3);
 
 let state = {
-  city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '',
+  city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '', preferredHotels: [], useTripReviews: true,
   checkIn: _isoLocal(_defaultCheckIn), checkOut: _isoLocal(_defaultCheckOut),
   accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 4.0,
   minRoomSize: 27, minReviews: 200, fetchRoomRates: true, lookupMissing: true,
@@ -952,8 +965,9 @@ function buildAreaRule() {
 }
 
 function buildPromptWithRealData(hotels) {
-  const preferred = state.preferredHotel
-    ? `★ PREFERRED HOTEL: "${state.preferredHotel}" — always include this hotel in your analysis regardless of price or location constraints.` : '';
+  const prefNames = state.preferredHotels.map(n => `"${n}"`).join(', ');
+  const preferred = prefNames
+    ? `★ PREFERRED HOTELS: ${prefNames} — always include these hotels in your analysis regardless of price or location constraints.` : '';
 
   // Approximate nightly rate (local currency) below which PRICE_LEVEL_VERY_EXPENSIVE is excluded
   const VERY_EXP_FLOOR = { SGD:380, USD:280, MYR:1300, THB:11000, JPY:45000, EUR:280, GBP:240, HKD:2200, AUD:420, IDR:4200000, TWD:8500, KRW:370000, CNY:2000 };
@@ -991,21 +1005,14 @@ function buildPromptWithRealData(hotels) {
 
   const cap = Math.min(eligible.length, ((state.maxResults || 12) + 8) * (state.district ? 3 : 1));
   // Rank by review volume first (most-reviewed = most trusted), rating as tie-breaker
-  const topHotels = [...eligible].sort((a, b) =>
+  let topHotels = [...eligible].sort((a, b) =>
     (b.reviewCount || 0) - (a.reviewCount || 0) || (b.rating || 0) - (a.rating || 0)
   ).slice(0, cap);
 
-  // Always include preferred hotel and put it FIRST so the AI never truncates it
-  if (state.preferredHotel) {
-    const prefIdx = topHotels.findIndex(h => matchesPref(h.name));
-    if (prefIdx > 0) {
-      // Already in list but not first — move to front
-      topHotels.unshift(topHotels.splice(prefIdx, 1)[0]);
-    } else if (prefIdx === -1) {
-      // Not in list (outside cap) — prepend from eligible
-      const prefHotel = eligible.find(h => matchesPref(h.name));
-      if (prefHotel) topHotels.unshift(prefHotel);
-    }
+  // Always include the preferred hotels and put them FIRST so the AI never truncates them
+  if (state.preferredHotels.length) {
+    const prefs = eligible.filter(h => matchesPref(h.name));
+    topHotels = [...prefs, ...topHotels.filter(h => !prefs.includes(h))];
   }
 
   const hotelContext = topHotels.map((h, i) => {
@@ -1082,7 +1089,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 
 IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from real data above.
 ${state.district ? `Analyse the ${topHotels.length} hotels above but return results ONLY for those inside "${state.district}" — omit the rest. Return at most ${(state.maxResults || 12) * 2} hotels: the in-area ones with the highest review counts.` : `Analyse ALL ${topHotels.length} hotels and return results for every one.`} Prices are estimates for research.
-${state.preferredHotel ? `MANDATORY: "${state.preferredHotel}" marked ★PREFERRED above MUST appear in your JSON output. Do not omit it under any circumstances.` : ''}
+${state.preferredHotels.length ? `MANDATORY: ${state.preferredHotels.map(n => `"${n}"`).join(', ')} (marked ★PREFERRED above) MUST appear in your JSON output. Do not omit any of them under any circumstances.` : ''}
 
 Return ONLY a valid JSON array (no markdown, no explanation):
 [{
@@ -1105,7 +1112,7 @@ Return ONLY a valid JSON array (no markdown, no explanation):
 }
 
 function buildPromptAIOnly() {
-  const preferred = state.preferredHotel ? `Specifically include: "${state.preferredHotel}".` : '';
+  const preferred = state.preferredHotels.length ? `Specifically include: ${state.preferredHotels.map(n => `"${n}"`).join(', ')}.` : '';
   const locParts  = [state.city, state.district, state.nearLocation ? 'near ' + state.nearLocation : ''].filter(Boolean).join(', ');
   const mrtNote   = state.maxMRTWalk !== 'any'
     ? `PRIORITY: Only include properties within ${state.maxMRTWalk === 'walk' ? 'walking distance' : state.maxMRTWalk} of MRT/metro.` : '';
@@ -1299,8 +1306,8 @@ async function callWithFallback(prompt) {
 function calculateScore(hotel) {
   let s = hotel.guestRating * 1.5;
   // Review-volume bonus — more reviews = more trustworthy rating, capped so it never outweighs guest rating
-  s += Math.min(1.0, Math.log10((hotel.reviewCount || 0) + 1) / 4);
-  if (state.preferredHotel && hotel.name.toLowerCase().includes(state.preferredHotel.toLowerCase())) s += 2.0;
+  s += Math.min(1.0, Math.log10(effectiveReviews(hotel) + 1) / 4);
+  if (matchesPref(hotel.name)) s += 2.0;
   if ((hotel.proximity?.mrt||'').toLowerCase().match(/walking|km/)) s += 1.0;
   if (hotel.carParkAvailable) s += 0.5;
   return Math.min(10, Math.round(s * 10) / 10);
@@ -1363,6 +1370,17 @@ async function fetchLiveRates(pages = 2) {
 
 // Nightly rate used for budget checks: before taxes when Google gives it (the report is "plus taxes"), else the displayed rate
 function liveNight(live) { return live.rateBeforeTax > 0 ? live.rateBeforeTax : live.rate; }
+
+// Ratings Google shows from other sites (only known for hotels we looked up individually, 1 credit each)
+function tripStats(h) {
+  const pick = re => { const o = (h.otherReviews || []).find(x => re.test(x.source)); return o ? { rating: o.rating, reviews: o.reviews } : null; };
+  return { trip: pick(/trip\.com/i), ta: pick(/tripadvisor/i) };
+}
+// Popularity = the larger of Google's and Trip.com's review count (Chinese-market hotels are far bigger on Trip.com)
+function effectiveReviews(h) {
+  const g = h.reviewCount || 0;
+  return state.useTripReviews ? Math.max(g, tripStats(h).trip?.reviews || 0) : g;
+}
 
 // "35 m²", "35", 35 → 35; anything without a number → null (unknown)
 function parseSizeM2(v) {
@@ -1432,7 +1450,7 @@ function dedupeByProperty(hotels) {
 
 // "Max Results": keep the best N, preferring hotels that have live room rates; the preferred hotel is always kept
 function capToMaxResults(hotels) {
-  const n = Math.max(state.maxResults || 12, 1);
+  const n = Math.max(state.maxResults || 12, state.preferredHotels.length, 1);
   const order = [];
   const add = h => { if (!order.includes(h)) order.push(h); };
   hotels.filter(h => h._isPreferred || matchesPref(h.name)).forEach(add);
@@ -1475,6 +1493,7 @@ async function lookupMissingHotels(hotels) {
         h.exchangeRateToMYR = rate;
         if (h.roomTypes?.length) h.roomTypes = applyLiveRate(h.roomTypes, { rate: night }, rate);
         if (found.length) h._plans = found;
+        if (d.otherReviews?.length) h.otherReviews = d.otherReviews;
         if (!h.lat && d.lat) { h.lat = d.lat; h.lng = d.lng; }
         found++;
       } catch { /* leave this hotel as an estimate */ }
@@ -1579,6 +1598,7 @@ async function fetchRoomPlans(hotel) {
       });
       if (!r.ok) return null;
       const d = await r.json();
+      if (Array.isArray(d.otherReviews) && d.otherReviews.length) hotel.otherReviews = d.otherReviews;
       if (Array.isArray(d.plans) && d.plans.length) return d.plans;
       if (Array.isArray(d.prices) && d.prices.length) return pricesToPlans(d.prices);
       return Array.isArray(d.plans) ? d.plans : null;
@@ -1671,18 +1691,23 @@ async function enrichRoomRates(hotels) {
                bestNight: Math.round(night), bestNightMYR: night * rate,
                bestBf: best.bf === 'bf', bestFree: best.freeCancel, bestUntil: best.until };
     });
-    const fits = all
+    let fits = all
       .filter(r => r.bestNightMYR >= state.minPrice && r.bestNightMYR <= state.maxPrice && (r.size == null || r.size >= state.minRoomSize))
       .sort((a, b) => a.bestNight - b.bestNight)
       .slice(0, ROOMS_PER_HOTEL);
+    const isPref = h._isPreferred || matchesPref(h.name);
+    if (!fits.length && isPref) {   // the user asked for this hotel: show its cheapest rooms, flagged as outside the criteria
+      fits = [...all].sort((a, b) => a.bestNight - b.bestNight).slice(0, ROOMS_PER_HOTEL);
+      h._outsideCriteria = true;
+    }
     h.rooms = fits;
     h.roomsFound = all.length;
     h.roomTypes = fits.map(r => ({
       type: r.name, sizeM2: r.size ? `~${r.size} m²` : '—', breakfastIncluded: r.bestBf,
       cancellationPolicy: r.bestFree ? (r.bestUntil ? `Free cancel until ${r.bestUntil}` : 'Free cancel') : 'Non-refundable',
-      pricePerNight: r.bestNight, _inBudget: true, _live: true
+      pricePerNight: r.bestNight, _inBudget: r.bestNightMYR >= state.minPrice && r.bestNightMYR <= state.maxPrice, _live: true
     }));
-    if (!fits.length && !h._isPreferred && !matchesPref(h.name)) {
+    if (!fits.length && !isPref) {
       dropped.add(h);
       window._filterDiag.push({ name: h.name, reason: `none of ${all.length} room types fit RM${state.minPrice}–${state.maxPrice}/night and ≥${state.minRoomSize} m²` });
     }
@@ -1758,6 +1783,9 @@ async function exportLuxeReport() {
 
   const hotelNotes = h => {
     const notes = [`Google ★${h.guestRating} (${(h.reviewCount || 0).toLocaleString()} reviews) · LuxeScore ${h.compositeScore}/10${h._isPreferred ? ' · ★ Preferred' : ''}`];
+    { const t = tripStats(h);
+      if (t.trip || t.ta) notes.push([t.trip ? `Trip.com ★${Number(t.trip.rating).toFixed(1)} (${t.trip.reviews.toLocaleString()} reviews, as listed by Google)` : '', t.ta ? `Tripadvisor ★${Number(t.ta.rating).toFixed(1)} (${t.ta.reviews.toLocaleString()})` : ''].filter(Boolean).join(' · ')); }
+    if (h._outsideCriteria) notes.push('Preferred hotel: no room type meets your budget/size, so its cheapest rooms are shown');
     if (h.area) notes.push(`Area: ${h.area}`);
     if (h.distKm != null && state.nearLocation) notes.push(`${h.distKm.toFixed(1)} km from ${state.nearLocation}`);
     const px = h.proximity || {};
@@ -1767,14 +1795,15 @@ async function exportLuxeReport() {
     return notes;
   };
   const colStat = { hotel: { free: 0, non: 0 }, agoda: { free: 0, non: 0 }, booking: { free: 0, non: 0 }, trip: { free: 0, non: 0 }, other: { free: 0, non: 0 } };
-  const topPick = hotels.find(h => h._isPreferred) || hotels[0];
+  const topPicks = new Set(hotels.filter(h => h._isPreferred));
+  if (!topPicks.size) topPicks.add(hotels[0]);
   let r = 8;
 
   for (const h of hotels) {
     const notes = hotelNotes(h);
 
     const height = Math.max(h.rooms.length * 2, notes.length, 2);
-    const isTop = h === topPick;
+    const isTop = topPicks.has(h);
     const fill = isTop ? YEL : undefined;
 
     // Hotel name: one line, or split over two rows like the template when long
@@ -2052,7 +2081,10 @@ async function handleSearch(e) {
   state.city             = document.getElementById('city').value.trim();
   state.district         = document.getElementById('district').value.trim();
   state.nearLocation     = document.getElementById('near-location').value.trim();
-  state.preferredHotel   = document.getElementById('preferred-hotel').value.trim();
+  state.preferredHotels  = ['preferred-hotel', 'preferred-hotel-2', 'preferred-hotel-3']
+    .map(id => (document.getElementById(id)?.value || '').trim()).filter(Boolean)
+    .filter((n, i, a) => a.findIndex(x => x.toLowerCase() === n.toLowerCase()) === i).slice(0, 3);
+  state.preferredHotel   = state.preferredHotels[0] || '';
   state.maxMRTWalk       = document.getElementById('mrt-distance').value;
   state.accommodationTypes = [...document.querySelectorAll('.accom-pill.active')].map(el => el.dataset.type);
   if (!state.accommodationTypes.length) state.accommodationTypes = ['Hotel','Resort'];
@@ -2065,6 +2097,7 @@ async function handleSearch(e) {
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
   state.minRoomSize  = Math.max(0, parseFloat(document.getElementById('min-room-size').value) || 0);
   state.minReviews   = Math.max(0, parseInt(document.getElementById('min-reviews').value) || 0);
+  state.useTripReviews = document.getElementById('use-trip-reviews').checked;
   state.fetchRoomRates = document.getElementById('use-room-rates').checked;
   state.lookupMissing = document.getElementById('lookup-missing').checked;
   state.minPrice     = parseInt(document.getElementById('min-price').value);
@@ -2093,25 +2126,26 @@ async function handleSearch(e) {
   try {
     setSearchStatus('Fetching real hotels from Google Maps…');
     const hotels = await fetchRealHotels();
-    window._prefCanonical = ''; // reset before each search
+    window._prefCanonicals = {};   // reset before each search: preferred name (lowercase) → Google's name for it
 
-    // ── Inject preferred hotel via targeted lookup ──────────────
-    if (state.preferredHotel && PROXY_MODE) {
-      const alreadyIn = hotels.some(h => matchesPref(h.name));
-      if (!alreadyIn) {
+    // ── Inject each preferred hotel (up to 3) via targeted lookup ──────────────
+    if (state.preferredHotels.length && PROXY_MODE) {
+      for (const name of state.preferredHotels) {
+        const key = name.toLowerCase();
+        const found = hotels.find(h => matchesOnePref(h.name, name));
+        if (found) { window._prefCanonicals[key] = found.name.toLowerCase(); continue; }   // already in the pool
         try {
-          setSearchStatus(`Looking up preferred hotel: ${state.preferredHotel}…`);
+          setSearchStatus(`Looking up preferred hotel: ${name}…`);
           const prefPlaces = await fetch('/api/places', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ city: state.city, textQuery: `${state.preferredHotel} ${state.city}`, maxResults: 3 })
+            body: JSON.stringify({ city: state.city, textQuery: `${name} ${state.city}`, maxResults: 3 })
           }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
           if (prefPlaces.length > 0) {
-            // Find best match by brand-word edit distance; fall back to first result
-            const raw = prefPlaces.find(pl => matchesPref(pl.displayName?.text || '')) || prefPlaces[0];
-            const p = raw;
+            // Best match by brand-word edit distance; fall back to the first result
+            const p = prefPlaces.find(pl => matchesOnePref(pl.displayName?.text || '', name)) || prefPlaces[0];
             const prefHotel = {
-              name:        p.displayName?.text || state.preferredHotel,
+              name:        p.displayName?.text || name,
               rating:      p.rating || 0,
               reviewCount: p.userRatingCount || 0,
               priceLevel:  p.priceLevel || '',
@@ -2122,13 +2156,9 @@ async function handleSearch(e) {
               reviews:     (p.reviews || []).map(rv => ({ rating: rv.rating, text: (rv.text?.text || '').slice(0,300) })).filter(rv => rv.text)
             };
             hotels.push(prefHotel);
-            window._prefCanonical = prefHotel.name.toLowerCase(); // store for fuzzy match
+            window._prefCanonicals[key] = prefHotel.name.toLowerCase();   // store for fuzzy match
           }
         } catch(e) { /* silent */ }
-      } else {
-        // Already found — store its canonical name for filter bypass
-        const found = hotels.find(h => matchesPref(h.name));
-        if (found) window._prefCanonical = found.name.toLowerCase();
       }
     }
 
@@ -2154,28 +2184,28 @@ async function handleSearch(e) {
     results = filterAndScore(data);
 
     // ── Guaranteed preferred hotel injection ──────────────────────────
-    // If the AI omitted the preferred hotel, inject it directly from Places data
-    if (state.preferredHotel && results.every(h => !matchesPref(h.name))) {
-      const ph = (lastRealHotels || []).find(h => matchesPref(h.name));
-      if (ph) {
-        const rate = KNOWN_RATES[state.currency] || 1;
-        const distKm = (_nearLat && ph.lat && ph.lng) ? haversineKm(_nearLat, _nearLng, ph.lat, ph.lng) : null;
-        const stub = {
-          name: ph.name, type: 'Hotel', stars: 4,
-          guestRating: ph.rating || 0, reviewCount: ph.reviewCount || 0,
-          carParkAvailable: false, exchangeRateToMYR: rate,
-          roomTypes: [], features: [],
-          reviewMetrics: { staffFriendliness:{rating:0}, overallCondition:{rating:0}, cleanliness:{rating:0}, transitProximity:{rating:0}, acPerformance:{rating:0}, noiseLevel:{rating:0}, soundproofing:{rating:0}, roomComfort:{rating:0}, bathroomCondition:{rating:0}, maintenanceQuality:{rating:0} },
-          profileRecommendations: { business:'', family:'', budget:'', lightSleeper:'' },
-          proximity: { mrt:'—', beach:'—', airport:'—' },
-          pros: ['★ Preferred hotel — re-run search for full AI analysis'], cons: [],
-          lat: ph.lat, lng: ph.lng, distKm,
-          _isPreferred: true, _excluded: null
-        };
-        stub.compositeScore = calculateScore(stub) + 2;
-        results.unshift(stub); // always first
-        toast(`★ ${ph.name} added as preferred hotel`, 3000);
-      }
+    // If the AI omitted a preferred hotel, inject it directly from Places data
+    for (const name of state.preferredHotels) {
+      if (results.some(h => matchesOnePref(h.name, name))) continue;
+      const ph = (lastRealHotels || []).find(h => matchesOnePref(h.name, name));
+      if (!ph) continue;
+      const rate = KNOWN_RATES[state.currency] || 1;
+      const distKm = (_nearLat && ph.lat && ph.lng) ? haversineKm(_nearLat, _nearLng, ph.lat, ph.lng) : null;
+      const stub = {
+        name: ph.name, type: 'Hotel', stars: 4,
+        guestRating: ph.rating || 0, reviewCount: ph.reviewCount || 0,
+        carParkAvailable: false, exchangeRateToMYR: rate,
+        roomTypes: [], features: [],
+        reviewMetrics: { staffFriendliness:{rating:0}, overallCondition:{rating:0}, cleanliness:{rating:0}, transitProximity:{rating:0}, acPerformance:{rating:0}, noiseLevel:{rating:0}, soundproofing:{rating:0}, roomComfort:{rating:0}, bathroomCondition:{rating:0}, maintenanceQuality:{rating:0} },
+        profileRecommendations: { business:'', family:'', budget:'', lightSleeper:'' },
+        proximity: { mrt:'—', beach:'—', airport:'—' },
+        pros: ['★ Preferred hotel — re-run search for full AI analysis'], cons: [],
+        lat: ph.lat, lng: ph.lng, distKm,
+        _isPreferred: true, _excluded: null
+      };
+      stub.compositeScore = calculateScore(stub) + 2;
+      results.unshift(stub); // always first
+      toast(`★ ${ph.name} added as preferred hotel`, 3000);
     }
 
     if (results.length === 0) {
@@ -2196,7 +2226,9 @@ async function handleSearch(e) {
 
     // ── Step 3: real room types + prices per booking site, filtered on budget & room size ──
     if (state.fetchRoomRates && PROXY_MODE) {
-      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = dedupeByProperty(results); results = await enrichRoomRates(results); }
+      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = dedupeByProperty(results); results = await enrichRoomRates(results);
+        results.forEach(h => { if (h.otherReviews) h.compositeScore = calculateScore(h); });
+        results.sort((a, b) => (b._isPreferred ? 1 : 0) - (a._isPreferred ? 1 : 0) || b.compositeScore - a.compositeScore); }
       catch (e) { setStep(3,'err', e.message.slice(0,40)); }
       if (results.length === 0) {
         const diag = (window._filterDiag || []).filter(d => d.reason.startsWith('none of'));
@@ -2310,6 +2342,7 @@ function renderHotelCard(hotel, idx) {
               <span class="text-slate-400">/ 5 • ${(hotel.reviewCount||0).toLocaleString()} reviews</span>
               ${ratingBadge}
             </div>
+            ${(() => { const t = tripStats(hotel); return (t.trip || t.ta) ? `<div class="flex items-center gap-2 text-[11px] font-black text-slate-500">${t.trip ? `<span class="bg-sky-50 text-sky-700 border border-sky-200 px-2.5 py-1 rounded-lg">Trip.com ★${Number(t.trip.rating).toFixed(1)} · ${t.trip.reviews.toLocaleString()} reviews</span>` : ''}${t.ta ? `<span class="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg">Tripadvisor ★${Number(t.ta.rating).toFixed(1)} · ${t.ta.reviews.toLocaleString()}</span>` : ''}</div>` : ''; })()}
             <div class="text-slate-400 uppercase tracking-widest">${hotel.type}</div>
           </div>
         </div>
@@ -3220,7 +3253,7 @@ function saveSearch() {
     ts: new Date().toLocaleDateString(),
     params: {
       city: state.city, district: state.district, nearLocation: state.nearLocation,
-      preferredHotel: state.preferredHotel, checkIn: state.checkIn, checkOut: state.checkOut,
+      preferredHotel: state.preferredHotel, preferredHotels: [...state.preferredHotels], checkIn: state.checkIn, checkOut: state.checkOut,
       accommodationTypes: [...state.accommodationTypes], tripVibes: [...state.tripVibes], maxMRTWalk: state.maxMRTWalk,
       minRating: state.minRating, minPrice: state.minPrice, maxPrice: state.maxPrice,
       currency: state.currency, minKm: state.minKm, maxKm: state.maxKm,
@@ -3245,7 +3278,9 @@ function loadSearch(id) {
   document.getElementById('city').value           = p.city || '';
   document.getElementById('district').value        = p.district || '';
   document.getElementById('near-location').value   = p.nearLocation || '';
-  document.getElementById('preferred-hotel').value = p.preferredHotel || '';
+  const pn = p.preferredHotels || (p.preferredHotel ? [p.preferredHotel] : []);
+  ['preferred-hotel', 'preferred-hotel-2', 'preferred-hotel-3'].forEach((id, i) => { document.getElementById(id).value = pn[i] || ''; });
+  state.preferredHotels = pn.slice(0, 3);
   document.getElementById('mrt-distance').value    = p.maxMRTWalk || 'any';
   document.getElementById('min-rating').value      = Number(p.minRating || 4.0).toFixed(1);
   document.getElementById('min-room-size').value   = p.minRoomSize ?? 27;
@@ -3445,6 +3480,7 @@ function init() {
   document.getElementById('min-rating').value       = Number(state.minRating).toFixed(1);
   document.getElementById('min-room-size').value    = state.minRoomSize;
   document.getElementById('min-reviews').value      = state.minReviews;
+  document.getElementById('use-trip-reviews').checked = state.useTripReviews;
   document.getElementById('use-room-rates').checked = state.fetchRoomRates;
   document.getElementById('lookup-missing').checked = state.lookupMissing;
   document.getElementById('min-price').value        = state.minPrice;
