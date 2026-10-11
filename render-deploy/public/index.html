@@ -1016,7 +1016,7 @@ function buildPromptWithRealData(hotels) {
     const isPref = matchesPref(h.name);
     const live = findLiveRate(h.name, h.lat, h.lng);
     const liveLine = live
-      ? `\n     LIVE MARKET RATE (verified, Google Hotels): ${live.rate} ${state.currency}/night — use this exact figure as the cheapest room's pricePerNight; price other tiers relative to it.`
+      ? `\n     LIVE MARKET RATE (verified, Google Hotels, before taxes): ${liveNight(live)} ${state.currency}/night — use this exact figure as the cheapest room's pricePerNight; price other tiers relative to it.`
       : '';
     return `${i+1}. ${h.name}${isPref ? ' ★PREFERRED' : ''}
      Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews${tier ? ` | Price tier: ${tier}` : ''}${liveLine}
@@ -1081,7 +1081,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 8. BOOKING LINKS: URLs for booking.com, agoda, trip.com, hotels.com, expedia, tripadvisor.
 
 IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from real data above.
-${state.district ? `Analyse the ${topHotels.length} hotels above but return results ONLY for those inside "${state.district}" — omit the rest.` : `Analyse ALL ${topHotels.length} hotels and return results for every one.`} Prices are estimates for research.
+${state.district ? `Analyse the ${topHotels.length} hotels above but return results ONLY for those inside "${state.district}" — omit the rest. Return at most ${(state.maxResults || 12) * 2} hotels: the in-area ones with the highest review counts.` : `Analyse ALL ${topHotels.length} hotels and return results for every one.`} Prices are estimates for research.
 ${state.preferredHotel ? `MANDATORY: "${state.preferredHotel}" marked ★PREFERRED above MUST appear in your JSON output. Do not omit it under any circumstances.` : ''}
 
 Return ONLY a valid JSON array (no markdown, no explanation):
@@ -1361,6 +1361,9 @@ async function fetchLiveRates(pages = 2) {
   return window._liveRates;
 }
 
+// Nightly rate used for budget checks: before taxes when Google gives it (the report is "plus taxes"), else the displayed rate
+function liveNight(live) { return live.rateBeforeTax > 0 ? live.rateBeforeTax : live.rate; }
+
 // "35 m²", "35", 35 → 35; anything without a number → null (unknown)
 function parseSizeM2(v) {
   if (typeof v === 'number') return v > 0 ? v : null;
@@ -1393,9 +1396,9 @@ function attachLiveRate(h) {
   const live = findLiveRate(h.name, h.lat, h.lng);
   if (!live) return false;
   const rate = KNOWN_RATES[state.currency] || 1;
-  h.liveRate = { rate: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency, token: live.token || null, locationRating: live.locationRating ?? null };
+  h.liveRate = { rate: liveNight(live), rateAllIn: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency, token: live.token || null, locationRating: live.locationRating ?? null };
   h.exchangeRateToMYR = rate;
-  if (h.roomTypes?.length) h.roomTypes = applyLiveRate(h.roomTypes, live, rate);
+  if (h.roomTypes?.length) h.roomTypes = applyLiveRate(h.roomTypes, { ...live, rate: liveNight(live) }, rate);
   return true;
 }
 
@@ -1411,6 +1414,32 @@ async function findMissingLiveRates(hotels) {
     if ((window._liveRates || []).length <= prev.length) { window._liveRates = prev; break; }   // no further pages / failed
     missing().forEach(attachLiveRate);
   }
+}
+
+// Google can list one building twice (e.g. "Elong Hotel" is the Holiday Inn Nanjing Road): same property → keep the better-ranked entry
+function dedupeByProperty(hotels) {
+  const seen = new Map(), out = [];
+  window._filterDiag = window._filterDiag || [];
+  for (const h of hotels) {
+    const keys = [h.liveRate?.token, h.liveRate && h.lat && h.lng ? `${h.lat.toFixed(4)},${h.lng.toFixed(4)}` : null].filter(Boolean);
+    const dupOf = keys.map(k => seen.get(k)).find(Boolean);
+    if (dupOf) { window._filterDiag.push({ name: h.name, reason: `duplicate listing of ${dupOf} (same property)` }); continue; }
+    keys.forEach(k => seen.set(k, h.name));
+    out.push(h);
+  }
+  return out;
+}
+
+// "Max Results": keep the best N, preferring hotels that have live room rates; the preferred hotel is always kept
+function capToMaxResults(hotels) {
+  const n = Math.max(state.maxResults || 12, 1);
+  const order = [];
+  const add = h => { if (!order.includes(h)) order.push(h); };
+  hotels.filter(h => h._isPreferred || matchesPref(h.name)).forEach(add);
+  hotels.filter(h => h.rooms?.length).forEach(add);
+  hotels.forEach(add);
+  const keep = new Set(order.slice(0, n));
+  return hotels.filter(h => keep.has(h));   // original (score) order
 }
 
 // Shortlisted hotels still without live data (not in Google's city-wide list at all): look each one up by name.
@@ -1438,7 +1467,7 @@ async function lookupMissingHotels(hotels) {
         if (!r.ok) continue;
         const d = await r.json();
         if (!d.found || (!d.token && !d.plans?.length)) continue;
-        let night = d.rate;
+        let night = d.rateBeforeTax > 0 ? d.rateBeforeTax : d.rate;
         if (!(night > 0) && d.plans?.length) night = Math.round(Math.min(...d.plans.map(p => p.totalPreTax || p.total || Infinity)) / nights);
         if (!(night > 0) || !isFinite(night)) continue;
         h.liveRate = { rate: night, rateBeforeTax: d.rateBeforeTax ?? null, totalRate: d.totalRate ?? null, offers: [], currency: state.currency, token: d.token || null, locationRating: d.locationRating ?? null };
@@ -1475,7 +1504,7 @@ function applyLiveRate(roomTypes, live, rateToMYR) {
 // ═══════════════════════════════════════════════════
 // ROOM-LEVEL RATES — real room types per booking site, filtered on budget + size
 // ═══════════════════════════════════════════════════
-const ROOM_LOOKUP_MAX = 15;   // hotels looked up per search (1 SerpApi credit each)
+const ROOM_LOOKUP_MAX = 24;   // upper bound on room lookups per search (1 SerpApi credit each); stops earlier once the shortlist is full
 const ROOMS_PER_HOTEL = 3;    // qualifying room types kept per hotel
 const REPORT_COLS = ['hotel', 'agoda', 'booking', 'trip', 'other'];
 
@@ -1535,15 +1564,21 @@ async function fetchRoomPlans(hotel) {
   if (hotel._plans) return hotel._plans;   // already returned by the by-name lookup
   const token = hotel.liveRate?.token;
   if (!token) return null;
-  try {
-    const r = await fetch('/api/hotel-rooms', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency })
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return Array.isArray(d.plans) ? d.plans : null;
-  } catch { return null; }
+  const once = async fresh => {
+    try {
+      const r = await fetch('/api/hotel-rooms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency, fresh })
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return Array.isArray(d.plans) ? d.plans : null;
+    } catch { return null; }
+  };
+  let plans = await once(false);
+  // A hotel with a live rate is bookable, so an empty or failed room list is a glitch: retry once, bypassing the cache
+  if ((!plans || !plans.length) && hotel.liveRate?.rate > 0) plans = await once(true);
+  return plans;
 }
 
 // Room size isn't in any booking-site feed, so ask the AI for published sizes (always labelled "est." in the UI/report)
@@ -1572,27 +1607,44 @@ Return ONLY a valid JSON array, one item per hotel, using the exact hotel and ro
 // Replace AI room guesses with real room types + prices; keep up to 3 per hotel that fit budget & size
 async function enrichRoomRates(hotels) {
   const nights = getNights();
-  const targets = hotels.filter(h => h.liveRate?.token || h._plans).slice(0, ROOM_LOOKUP_MAX);
-  if (!targets.length) { setStep(3, 'skip', 'No hotels with live room data'); return hotels; }
+  const ranked = hotels.filter(h => h.liveRate?.token || h._plans);   // already in score order
+  if (!ranked.length) { setStep(3, 'skip', 'No hotels with live room data'); return hotels; }
 
-  setStep(3, 'active', `Fetching room rates for ${targets.length} hotels…`);
+  setStep(3, 'active', 'Fetching room rates, best-ranked hotels first…');
   setSearchStatus('Fetching live room-type rates…');
+  // Walk the ranking and stop once enough hotels have a room inside the budget (size is checked afterwards, once
+  // the AI has estimated it), so credits go to hotels that will make the shortlist rather than to a fixed top-N
+  const want = (state.maxResults || 12) + 2;
   const fetched = new Map();
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
-    while (next < targets.length) { const h = targets[next++]; fetched.set(h, await fetchRoomPlans(h)); }
+  let next = 0, likely = 0;
+  await Promise.all(Array.from({ length: Math.min(4, ranked.length) }, async () => {
+    while (next < Math.min(ranked.length, ROOM_LOOKUP_MAX) && likely < want) {
+      const h = ranked[next++];
+      const plans = await fetchRoomPlans(h);
+      fetched.set(h, plans);
+      if (plans?.length) {
+        const fxr = h.exchangeRateToMYR || KNOWN_RATES[state.currency] || 1;
+        const fits = groupRoomPlans(plans).some(g => {
+          const b = bestOfCells(buildRoomCells(g.plans, nights));
+          const myr = b ? (b.total / nights) * fxr : 0;
+          return myr >= state.minPrice && myr <= state.maxPrice;
+        });
+        if (fits) likely++;
+      }
+    }
   }));
+  const targets = ranked.filter(h => fetched.has(h));
 
   const grouped = [];
   for (const h of targets) {
     const plans = fetched.get(h);
-    delete h._plans;   // keep saved results small
     if (!plans?.length) continue;
     const rooms = groupRoomPlans(plans)
       .map(g => ({ name: g.name, cells: buildRoomCells(g.plans, nights) }))
       .filter(r => Object.keys(r.cells).length);
     if (rooms.length) grouped.push({ h, rooms });
   }
+  hotels.forEach(h => { delete h._plans; });   // keep saved results small
   if (!grouped.length) { setStep(3, 'err', 'No room-level data returned'); return hotels; }
 
   setSearchStatus('Estimating room sizes…');
@@ -1871,7 +1923,7 @@ function filterAndScore(data) {
       aiRooms = roomTypes.filter(r => { const s = parseSizeM2(r.sizeM2); return s == null || s >= state.minRoomSize; });
       sizeDropped = roomTypes.length - aiRooms.length;
     }
-    const finalRooms = (live && !(sizeDropped && !aiRooms.length)) ? applyLiveRate(aiRooms, live, rate) : aiRooms;
+    const finalRooms = (live && !(sizeDropped && !aiRooms.length)) ? applyLiveRate(aiRooms, { ...live, rate: liveNight(live) }, rate) : aiRooms;
 
     return {
       ...h,
@@ -1881,7 +1933,7 @@ function filterAndScore(data) {
       lng: coords?.lng || live?.lng || null,
       distKm,
       roomTypes: finalRooms,
-      liveRate: live ? { rate: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency, token: live.token || null, locationRating: live.locationRating ?? null } : null,
+      liveRate: live ? { rate: liveNight(live), rateAllIn: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency, token: live.token || null, locationRating: live.locationRating ?? null } : null,
       _sizeDropped: sizeDropped,
       _excluded: null
     };
@@ -2135,7 +2187,7 @@ async function handleSearch(e) {
 
     // ── Step 3: real room types + prices per booking site, filtered on budget & room size ──
     if (state.fetchRoomRates && PROXY_MODE) {
-      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = await enrichRoomRates(results); }
+      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = dedupeByProperty(results); results = await enrichRoomRates(results); }
       catch (e) { setStep(3,'err', e.message.slice(0,40)); }
       if (results.length === 0) {
         const diag = (window._filterDiag || []).filter(d => d.reason.startsWith('none of'));
@@ -2146,6 +2198,7 @@ async function handleSearch(e) {
     } else {
       setStep(3,'skip', PROXY_MODE ? 'Room-level rates switched off' : 'Needs the hosted app (server-side key)');
     }
+    results = capToMaxResults(results);
 
     // Update header badge
     const badge = document.getElementById('data-source-badge');
@@ -2396,7 +2449,7 @@ function renderComparisonTable(hotel, nights) {
       <span class="badge-real">Live Rate</span>
       <span class="text-[10px] text-slate-600">${hotel.rooms?.length
         ? `Real room-type rates from booking sites (cheapest per night, plus taxes). Room sizes are AI estimates. Use <b>Report (Excel)</b> for the per-site breakdown.`
-        : `Google Hotels, ${nights} night${nights>1?'s':''}: from <b>${fmtPrice(hotel.liveRate.rate, cur)}</b>/night${hotel.liveRate.totalRate ? ` (${fmtPrice(hotel.liveRate.totalRate, cur)} total)` : ''}. Other room tiers are scaled estimates.`}</span>
+        : `Google Hotels, ${nights} night${nights>1?'s':''}: from <b>${fmtPrice(hotel.liveRate.rate, cur)}</b>/night before taxes. Other room tiers are scaled estimates.`}</span>
       ${(hotel.liveRate.offers||[]).filter(o=>o.rate>0).map(o => `<span class="text-[9px] bg-white border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-lg font-black">${String(o.source||'').replace(/[<>&"']/g,'')} ${fmtPrice(o.rate, cur)}${o.freeCancel ? ' · free cancel' : ''}</span>`).join('')}
     </div>` : `
     <div class="bg-amber-50/60 border-b border-amber-100 px-4 py-2 flex items-center gap-2">

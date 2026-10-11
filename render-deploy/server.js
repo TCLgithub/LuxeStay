@@ -181,6 +181,7 @@ app.post('/api/openai', async (req, res) => {
 // more pages later only pays for the new ones.
 const pageCache = new Map();
 const RATE_TTL_MS = 6 * 60 * 60 * 1000;
+const EMPTY_TTL_MS = 5 * 60 * 1000;   // an empty room list is usually a glitch, so don't pin it for hours
 const MAX_LIST_PAGES = 5;
 
 app.post('/api/hotel-rates', async (req, res) => {
@@ -277,7 +278,7 @@ app.post('/api/hotel-rooms', async (req, res) => {
   const key = process.env.SERPAPI_KEY || '';
   if (!key) return res.status(503).json({ error: 'SERPAPI_KEY not configured' });
 
-  const { token, checkIn, checkOut, currency = 'USD', adults = 2 } = req.body || {};
+  const { token, checkIn, checkOut, currency = 'USD', adults = 2, fresh = false } = req.body || {};
   const dateOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
   if (typeof token !== 'string' || !token || token.length > 400 || !dateOk(checkIn) || !dateOk(checkOut)) {
     return res.status(400).json({ error: 'token, checkIn and checkOut (YYYY-MM-DD) are required' });
@@ -287,7 +288,7 @@ app.post('/api/hotel-rooms', async (req, res) => {
 
   const cacheKey = [token, checkIn, checkOut, cur, nAdults].join('|');
   const hit = roomCache.get(cacheKey);
-  if (hit && Date.now() - hit.ts < RATE_TTL_MS) return res.json({ ...hit.data, cached: true });
+  if (!fresh && hit && Date.now() - hit.ts < (hit.data.plans.length ? RATE_TTL_MS : EMPTY_TTL_MS)) return res.json({ ...hit.data, cached: true });
 
   try {
     const params = new URLSearchParams({
