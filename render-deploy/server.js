@@ -270,6 +270,16 @@ function flattenPlans(data) {
   return plans.filter(p => p.room && (p.total > 0 || p.totalPreTax > 0 || p.perNight > 0));
 }
 
+// Flat per-site offers (SerpApi 'prices'): no room types, but live prices — used when featured_prices is empty
+function flattenPrices(data) {
+  return (data.prices || []).map(o => ({
+    source: o.source, official: !!o.official,
+    perNight: o.rate_per_night?.extracted_lowest ?? null, perNightPreTax: o.rate_per_night?.extracted_before_taxes_fees ?? null,
+    total: o.total_rate?.extracted_lowest ?? null, totalPreTax: o.total_rate?.extracted_before_taxes_fees ?? null,
+    freeCancel: !!o.free_cancellation, freeCancelUntil: o.free_cancellation_until_date || null
+  })).filter(p => p.total > 0 || p.totalPreTax > 0 || p.perNight > 0);
+}
+
 // ── Room-level rates for one hotel (SerpApi Google Hotels property details) ─
 // 1 SerpApi credit per call; cached 6h per property/dates/currency.
 const roomCache = new Map();
@@ -288,7 +298,7 @@ app.post('/api/hotel-rooms', async (req, res) => {
 
   const cacheKey = [token, checkIn, checkOut, cur, nAdults].join('|');
   const hit = roomCache.get(cacheKey);
-  if (!fresh && hit && Date.now() - hit.ts < (hit.data.plans.length ? RATE_TTL_MS : EMPTY_TTL_MS)) return res.json({ ...hit.data, cached: true });
+  if (!fresh && hit && Date.now() - hit.ts < (hit.data.plans.length || hit.data.prices?.length ? RATE_TTL_MS : EMPTY_TTL_MS)) return res.json({ ...hit.data, cached: true });
 
   try {
     const params = new URLSearchParams({
@@ -305,7 +315,8 @@ app.post('/api/hotel-rooms', async (req, res) => {
       name: data.name || null,
       hotelClass: data.extracted_hotel_class ?? null,
       locationRating: data.location_rating ?? null,
-      plans
+      plans,
+      prices: plans.length ? [] : flattenPrices(data)   // only needed when there are no room-level plans
     };
     roomCache.set(cacheKey, { ts: Date.now(), data: out });
     res.json(out);
@@ -370,16 +381,17 @@ app.post('/api/hotel-find', async (req, res) => {
       rating: p.overall_rating ?? null, reviews: p.reviews ?? null
     });
 
-    let cand = null, plans = null, shape = null;
+    let cand = null, plans = null, prices = null, shape = null;
     if (Array.isArray(data.properties)) {                       // a result list: take the matching entry
       const m = data.properties.find(matches);
       if (m) { cand = toCand(m); shape = 'list'; }
     }
     if (!cand && data.name && (data.property_token || data.featured_prices) && matches(data)) {   // resolved straight to the property
       cand = toCand(data); plans = flattenPlans(data); shape = 'property';
+      if (!plans.length) prices = flattenPrices(data);
     }
     if (!cand) return finish({ found: false });
-    finish({ found: true, shape, ...cand, ...(plans && plans.length ? { plans } : {}) });
+    finish({ found: true, shape, ...cand, ...(plans && plans.length ? { plans } : {}), ...(prices && prices.length ? { prices } : {}) });
   } catch (e) {
     res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
   }

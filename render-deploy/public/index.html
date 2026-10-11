@@ -1466,14 +1466,15 @@ async function lookupMissingHotels(hotels) {
         });
         if (!r.ok) continue;
         const d = await r.json();
-        if (!d.found || (!d.token && !d.plans?.length)) continue;
+        const found = d.plans?.length ? d.plans : pricesToPlans(d.prices);
+        if (!d.found || (!d.token && !found.length)) continue;
         let night = d.rateBeforeTax > 0 ? d.rateBeforeTax : d.rate;
-        if (!(night > 0) && d.plans?.length) night = Math.round(Math.min(...d.plans.map(p => p.totalPreTax || p.total || Infinity)) / nights);
+        if (!(night > 0) && found.length) night = Math.round(Math.min(...found.map(p => p.totalPreTax || p.total || Infinity)) / nights);
         if (!(night > 0) || !isFinite(night)) continue;
         h.liveRate = { rate: night, rateBeforeTax: d.rateBeforeTax ?? null, totalRate: d.totalRate ?? null, offers: [], currency: state.currency, token: d.token || null, locationRating: d.locationRating ?? null };
         h.exchangeRateToMYR = rate;
         if (h.roomTypes?.length) h.roomTypes = applyLiveRate(h.roomTypes, { rate: night }, rate);
-        if (d.plans?.length) h._plans = d.plans;
+        if (found.length) h._plans = found;
         if (!h.lat && d.lat) { h.lat = d.lat; h.lng = d.lng; }
         found++;
       } catch { /* leave this hotel as an estimate */ }
@@ -1560,6 +1561,12 @@ function bestOfCells(cells) {
   return best;
 }
 
+// Some hotels come back with per-site prices but no room types: keep those real prices as one clearly labelled "room"
+const NO_ROOM_NAME = 'Lowest available rate (room type not listed)';
+function pricesToPlans(prices) {
+  return (prices || []).map(p => ({ ...p, room: NO_ROOM_NAME, breakfast: false, beds: null }));
+}
+
 async function fetchRoomPlans(hotel) {
   if (hotel._plans) return hotel._plans;   // already returned by the by-name lookup
   const token = hotel.liveRate?.token;
@@ -1572,6 +1579,8 @@ async function fetchRoomPlans(hotel) {
       });
       if (!r.ok) return null;
       const d = await r.json();
+      if (Array.isArray(d.plans) && d.plans.length) return d.plans;
+      if (Array.isArray(d.prices) && d.prices.length) return pricesToPlans(d.prices);
       return Array.isArray(d.plans) ? d.plans : null;
     } catch { return null; }
   };
@@ -1648,7 +1657,7 @@ async function enrichRoomRates(hotels) {
   if (!grouped.length) { setStep(3, 'err', 'No room-level data returned'); return hotels; }
 
   setSearchStatus('Estimating room sizes…');
-  const sizes = await estimateRoomSizes(grouped.map(g => ({ hotel: g.h.name, rooms: g.rooms.map(r => r.name) })));
+  const sizes = await estimateRoomSizes(grouped.map(g => ({ hotel: g.h.name, rooms: g.rooms.map(r => r.name).filter(n => n !== NO_ROOM_NAME) })).filter(e => e.rooms.length));
 
   window._filterDiag = window._filterDiag || [];
   const dropped = new Set();
