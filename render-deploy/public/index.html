@@ -257,10 +257,13 @@
         <input type="number" id="min-reviews" value="200" min="0" step="10"
           class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"/>
         <p class="text-[9px] text-slate-400 font-bold pt-0.5">Ranked by highest review count, then highest rating. Hotels reviewed mainly on Chinese sites often have few Google reviews: lower this to include them.</p>
-        <label class="flex items-center gap-2 pt-1 cursor-pointer select-none">
-          <input type="checkbox" id="use-trip-reviews" checked class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"/>
-          <span class="text-[10px] font-bold text-slate-500">Also count Trip.com reviews for popularity (shown for hotels looked up individually)</span>
-        </label>
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest pt-2">Shortlist Mix</label>
+        <select id="shortlist-mix"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm cursor-pointer">
+          <option value="balanced" selected>Balanced: half by Google reviews, half by Trip.com</option>
+          <option value="google">Google reviews only</option>
+        </select>
+        <p class="text-[9px] text-slate-400 font-bold pt-0.5">Balanced looks up about 24 hotels (1 API credit each) to read their Trip.com review counts. Where Trip.com is thin (outside China) the unused slots fall back to Google.</p>
       </div>
 
       <!-- Min Room Size -->
@@ -657,7 +660,7 @@ const _defaultCheckIn = _monthFromToday();
 const _defaultCheckOut = new Date(_defaultCheckIn.getFullYear(), _defaultCheckIn.getMonth(), _defaultCheckIn.getDate() + 3);
 
 let state = {
-  city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '', preferredHotels: [], useTripReviews: true,
+  city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '', preferredHotels: [], shortlistMix: 'balanced',
   checkIn: _isoLocal(_defaultCheckIn), checkOut: _isoLocal(_defaultCheckOut),
   accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 4.0,
   minRoomSize: 27, minReviews: 200, fetchRoomRates: true, lookupMissing: true,
@@ -921,10 +924,10 @@ async function fetchRealHotels() {
   window._reviewDropped = [];
   const filtered = places.filter(p => {
     if ((p.rating || 0) < Math.min(state.minRating, 3.0)) return false;
-    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < state.minReviews && (p.rating || 0) >= state.minRating) {
+    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < googleFloor() && (p.rating || 0) >= state.minRating) {
       window._reviewDropped.push({ name: p.displayName?.text || 'Unknown Hotel', rating: p.rating, reviews: p.userRatingCount || 0 });
     }
-    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < state.minReviews) return false;
+    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < googleFloor()) return false;
     if (refName && (p.displayName?.text || '').toLowerCase().includes(refName)) return false;
     return true;
   });
@@ -972,7 +975,7 @@ function buildPromptWithRealData(hotels) {
   // Approximate nightly rate (local currency) below which PRICE_LEVEL_VERY_EXPENSIVE is excluded
   const VERY_EXP_FLOOR = { SGD:380, USD:280, MYR:1300, THB:11000, JPY:45000, EUR:280, GBP:240, HKD:2200, AUD:420, IDR:4200000, TWD:8500, KRW:370000, CNY:2000 };
 
-  window._preFilterDiag = (window._reviewDropped || []).map(d => ({ name: d.name, reason: `only ${d.reviews} Google reviews (★${d.rating}), below your minimum of ${state.minReviews}` }));
+  window._preFilterDiag = (window._reviewDropped || []).map(d => ({ name: d.name, reason: `only ${d.reviews} Google reviews (★${d.rating}), below the minimum of ${googleFloor()}` }));
   const eligible = hotels.filter(h => {
     // Preferred hotel always passes pre-filter
     if (matchesPref(h.name)) return true;
@@ -981,8 +984,8 @@ function buildPromptWithRealData(hotels) {
       window._preFilterDiag.push({ name: h.name, reason: `rating ${h.rating} below min ${state.minRating}` });
       return false;
     }
-    if ((h.reviewCount || 0) < state.minReviews) {
-      window._preFilterDiag.push({ name: h.name, reason: `${h.reviewCount} reviews below min ${state.minReviews}` });
+    if ((h.reviewCount || 0) < googleFloor()) {
+      window._preFilterDiag.push({ name: h.name, reason: `${h.reviewCount} reviews below min ${googleFloor()}` });
       return false;
     }
     if (h.priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE') {
@@ -1005,9 +1008,16 @@ function buildPromptWithRealData(hotels) {
 
   const cap = Math.min(eligible.length, ((state.maxResults || 12) + 8) * (state.district ? 3 : 1));
   // Rank by review volume first (most-reviewed = most trusted), rating as tie-breaker
-  let topHotels = [...eligible].sort((a, b) =>
-    (b.reviewCount || 0) - (a.reviewCount || 0) || (b.rating || 0) - (a.rating || 0)
-  ).slice(0, cap);
+  const byReviews = (a, b) => (b.reviewCount || 0) - (a.reviewCount || 0) || (b.rating || 0) - (a.rating || 0);
+  let topHotels;
+  if (state.shortlistMix === 'balanced') {
+    // reserve a third as many slots for hotels with few Google reviews: they may be big on Trip.com
+    const strong = eligible.filter(h => (h.reviewCount || 0) >= state.minReviews).sort(byReviews);
+    const thin = eligible.filter(h => (h.reviewCount || 0) < state.minReviews).sort((a, b) => (b.rating || 0) - (a.rating || 0) || byReviews(a, b));
+    topHotels = [...strong.slice(0, cap), ...thin.slice(0, Math.ceil(cap / 3))];
+  } else {
+    topHotels = [...eligible].sort(byReviews).slice(0, cap);
+  }
 
   // Always include the preferred hotels and put them FIRST so the AI never truncates them
   if (state.preferredHotels.length) {
@@ -1063,7 +1073,7 @@ ${state.district ? '- ' + buildAreaRule() : ''}
 ${state.tripVibes.length ? '- Trip vibe / activities wanted: ' + state.tripVibes.map(t => VIBE_GROUPS.flatMap(g => g.items).find(i => i.type === t)?.label || t).join(', ') : ''}
 ${buildCriteriaNote()}
 - MRT preference: ${state.maxMRTWalk === 'any' ? 'No restriction' : state.maxMRTWalk === 'walk' ? 'Walking distance only' : 'Within ' + state.maxMRTWalk}
-- Reviews: all properties below already have ≥${state.minReviews} Google reviews — when ranking pros/cons, favour the ones with both the highest review counts and the highest ratings.
+- Reviews: all properties below already have ≥${googleFloor()} Google reviews — when ranking pros/cons, favour the ones with both the highest review counts and the highest ratings.
 ${locationNote ? '- ' + locationNote : ''}
 ${mrtNote}
 
@@ -1088,7 +1098,7 @@ Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR
 8. BOOKING LINKS: URLs for booking.com, agoda, trip.com, hotels.com, expedia, tripadvisor.
 
 IMPORTANT: Use the EXACT hotel name from the list. Keep guestRating and reviewCount from real data above.
-${state.district ? `Analyse the ${topHotels.length} hotels above but return results ONLY for those inside "${state.district}" — omit the rest. Return at most ${(state.maxResults || 12) * 2} hotels: the in-area ones with the highest review counts.` : `Analyse ALL ${topHotels.length} hotels and return results for every one.`} Prices are estimates for research.
+${state.district ? `Analyse the ${topHotels.length} hotels above but return results ONLY for those inside "${state.district}" — omit the rest. ${state.shortlistMix === 'balanced' ? `Return every in-area hotel listed (at most ${(state.maxResults || 12) * 4}).` : `Return at most ${(state.maxResults || 12) * 2} hotels: the in-area ones with the highest review counts.`}` : `Analyse ALL ${topHotels.length} hotels and return results for every one.`} Prices are estimates for research.
 ${state.preferredHotels.length ? `MANDATORY: ${state.preferredHotels.map(n => `"${n}"`).join(', ')} (marked ★PREFERRED above) MUST appear in your JSON output. Do not omit any of them under any circumstances.` : ''}
 
 Return ONLY a valid JSON array (no markdown, no explanation):
@@ -1306,7 +1316,7 @@ async function callWithFallback(prompt) {
 function calculateScore(hotel) {
   let s = hotel.guestRating * 1.5;
   // Review-volume bonus — more reviews = more trustworthy rating, capped so it never outweighs guest rating
-  s += Math.min(1.0, Math.log10(effectiveReviews(hotel) + 1) / 4);
+  s += Math.min(1.0, Math.log10((hotel.reviewCount || 0) + 1) / 4);
   if (matchesPref(hotel.name)) s += 2.0;
   if ((hotel.proximity?.mrt||'').toLowerCase().match(/walking|km/)) s += 1.0;
   if (hotel.carParkAvailable) s += 0.5;
@@ -1376,11 +1386,9 @@ function tripStats(h) {
   const pick = re => { const o = (h.otherReviews || []).find(x => re.test(x.source)); return o ? { rating: o.rating, reviews: o.reviews } : null; };
   return { trip: pick(/trip\.com/i), ta: pick(/tripadvisor/i) };
 }
-// Popularity = the larger of Google's and Trip.com's review count (Chinese-market hotels are far bigger on Trip.com)
-function effectiveReviews(h) {
-  const g = h.reviewCount || 0;
-  return state.useTripReviews ? Math.max(g, tripStats(h).trip?.reviews || 0) : g;
-}
+// Google-review floor for the candidate pool. In balanced mode it drops to a junk filter (20): hotels that are big on
+// Trip.com can have very few Google reviews. The real minimum is then applied per source when the shortlist is picked.
+function googleFloor() { return state.shortlistMix === 'balanced' ? Math.min(state.minReviews, 20) : state.minReviews; }
 
 // "35 m²", "35", 35 → 35; anything without a number → null (unknown)
 function parseSizeM2(v) {
@@ -1448,16 +1456,34 @@ function dedupeByProperty(hotels) {
   return out;
 }
 
-// "Max Results": keep the best N, preferring hotels that have live room rates; the preferred hotel is always kept
-function capToMaxResults(hotels) {
-  const n = Math.max(state.maxResults || 12, state.preferredHotels.length, 1);
-  const order = [];
-  const add = h => { if (!order.includes(h)) order.push(h); };
-  hotels.filter(h => h._isPreferred || matchesPref(h.name)).forEach(add);
-  hotels.filter(h => h.rooms?.length).forEach(add);
-  hotels.forEach(add);
-  const keep = new Set(order.slice(0, n));
-  return hotels.filter(h => keep.has(h));   // original (score) order
+// Shortlist of "Max Results" hotels. After the preferred hotels, balanced mode gives half the slots to the most-reviewed
+// hotels on Google and half to the most-reviewed on Trip.com (each needs at least the minimum review count on its own
+// source). Where Trip.com data is thin or absent (outside China) the unused slots fall back to Google popularity.
+function selectShortlist(hotels) {
+  const N = Math.max(state.maxResults || 12, state.preferredHotels.length, 1);
+  const isPref = h => h._isPreferred || matchesPref(h.name);
+  const prefs = hotels.filter(isPref);
+  const pool = hotels.filter(h => !isPref(h));
+  const trip = h => tripStats(h).trip;
+  const byGoogle = (a, b) => (b.reviewCount || 0) - (a.reviewCount || 0) || (b.guestRating || 0) - (a.guestRating || 0);
+  const byTrip = (a, b) => trip(b).reviews - trip(a).reviews || (trip(b).rating || 0) - (trip(a).rating || 0);
+  const googleOk = h => (h.reviewCount || 0) >= state.minReviews;
+  const live = pool.filter(h => h.rooms?.length), est = pool.filter(h => !h.rooms?.length);
+  const slots = Math.max(N - prefs.length, 0);
+  const tripSlots = state.shortlistMix === 'balanced' ? Math.floor(slots / 2) : 0;
+
+  let google = live.filter(googleOk).sort(byGoogle).slice(0, slots - tripSlots);
+  const tripPicks = tripSlots
+    ? live.filter(h => !google.includes(h) && trip(h)?.reviews >= state.minReviews).sort(byTrip).slice(0, tripSlots) : [];
+  const taken = new Set([...google, ...tripPicks]);
+  const spare = slots - taken.size;
+  const fill = spare > 0 ? [...live, ...est].filter(h => !taken.has(h) && googleOk(h)).sort(byGoogle).slice(0, spare) : [];
+  google = [...google, ...fill].sort(byGoogle);
+
+  prefs.forEach(h => { h._pickedBy = 'Preferred'; });
+  google.forEach(h => { h._pickedBy = 'Google popularity'; });
+  tripPicks.forEach(h => { h._pickedBy = 'Trip.com popularity'; });
+  return [...prefs, ...google, ...tripPicks];
 }
 
 // Shortlisted hotels still without live data (not in Google's city-wide list at all): look each one up by name.
@@ -1643,12 +1669,26 @@ async function enrichRoomRates(hotels) {
   setSearchStatus('Fetching live room-type rates…');
   // Walk the ranking and stop once enough hotels have a room inside the budget (size is checked afterwards, once
   // the AI has estimated it), so credits go to hotels that will make the shortlist rather than to a fixed top-N
-  const want = (state.maxResults || 12) + 2;
+  const balanced = state.shortlistMix === 'balanced';
+  const want = balanced ? Infinity : (state.maxResults || 12) + 2;   // balanced needs Trip.com counts for the whole candidate set
+  const isPrefH = h => h._isPreferred || matchesPref(h.name);
+  let order = ranked;
+  if (balanced) {   // spend lookups on both kinds: Google-popular hotels and hotels with few Google reviews that may be big on Trip.com
+    const strong = ranked.filter(h => (h.reviewCount || 0) >= state.minReviews);
+    const thin = ranked.filter(h => (h.reviewCount || 0) < state.minReviews).sort((a, b) => (b.guestRating || 0) - (a.guestRating || 0));
+    order = [];
+    let i = 0, j = 0;
+    while (i < strong.length || j < thin.length) {
+      for (let k = 0; k < 2 && i < strong.length; k++) order.push(strong[i++]);
+      if (j < thin.length) order.push(thin[j++]);
+    }
+  }
+  order = [...order.filter(isPrefH), ...order.filter(h => !isPrefH(h))];   // preferred hotels are always looked up first
   const fetched = new Map();
   let next = 0, likely = 0;
   await Promise.all(Array.from({ length: Math.min(4, ranked.length) }, async () => {
-    while (next < Math.min(ranked.length, ROOM_LOOKUP_MAX) && likely < want) {
-      const h = ranked[next++];
+    while (next < Math.min(order.length, ROOM_LOOKUP_MAX) && likely < want) {
+      const h = order[next++];
       const plans = await fetchRoomPlans(h);
       fetched.set(h, plans);
       if (plans?.length) {
@@ -1783,6 +1823,7 @@ async function exportLuxeReport() {
 
   const hotelNotes = h => {
     const notes = [`Google ★${h.guestRating} (${(h.reviewCount || 0).toLocaleString()} reviews) · LuxeScore ${h.compositeScore}/10${h._isPreferred ? ' · ★ Preferred' : ''}`];
+    if (h._pickedBy) notes.push(`Shortlisted for: ${h._pickedBy}`);
     { const t = tripStats(h);
       if (t.trip || t.ta) notes.push([t.trip ? `Trip.com ★${Number(t.trip.rating).toFixed(1)} (${t.trip.reviews.toLocaleString()} reviews, as listed by Google)` : '', t.ta ? `Tripadvisor ★${Number(t.ta.rating).toFixed(1)} (${t.ta.reviews.toLocaleString()})` : ''].filter(Boolean).join(' · ')); }
     if (h._outsideCriteria) notes.push('Preferred hotel: no room type meets your budget/size, so its cheapest rooms are shown');
@@ -1996,8 +2037,8 @@ function filterAndScore(data) {
       return;
     }
 
-    if ((h.reviewCount || 0) < state.minReviews) {
-      h._excluded = `only ${h.reviewCount || 0} reviews — below min ${state.minReviews}`;
+    if ((h.reviewCount || 0) < googleFloor()) {
+      h._excluded = `only ${h.reviewCount || 0} reviews — below min ${googleFloor()}`;
       return;
     }
 
@@ -2097,7 +2138,7 @@ async function handleSearch(e) {
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
   state.minRoomSize  = Math.max(0, parseFloat(document.getElementById('min-room-size').value) || 0);
   state.minReviews   = Math.max(0, parseInt(document.getElementById('min-reviews').value) || 0);
-  state.useTripReviews = document.getElementById('use-trip-reviews').checked;
+  state.shortlistMix = document.getElementById('shortlist-mix').value;
   state.fetchRoomRates = document.getElementById('use-room-rates').checked;
   state.lookupMissing = document.getElementById('lookup-missing').checked;
   state.minPrice     = parseInt(document.getElementById('min-price').value);
@@ -2226,9 +2267,7 @@ async function handleSearch(e) {
 
     // ── Step 3: real room types + prices per booking site, filtered on budget & room size ──
     if (state.fetchRoomRates && PROXY_MODE) {
-      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = dedupeByProperty(results); results = await enrichRoomRates(results);
-        results.forEach(h => { if (h.otherReviews) h.compositeScore = calculateScore(h); });
-        results.sort((a, b) => (b._isPreferred ? 1 : 0) - (a._isPreferred ? 1 : 0) || b.compositeScore - a.compositeScore); }
+      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = dedupeByProperty(results); results = await enrichRoomRates(results); }
       catch (e) { setStep(3,'err', e.message.slice(0,40)); }
       if (results.length === 0) {
         const diag = (window._filterDiag || []).filter(d => d.reason.startsWith('none of'));
@@ -2239,7 +2278,12 @@ async function handleSearch(e) {
     } else {
       setStep(3,'skip', PROXY_MODE ? 'Room-level rates switched off' : 'Needs the hosted app (server-side key)');
     }
-    results = capToMaxResults(results);
+    results = selectShortlist(results);
+    if (!results.length) throw new Error(`No hotel reached the review minimum of ${state.minReviews} on Google${state.shortlistMix === 'balanced' ? ' or Trip.com' : ''}. Lower "Min Google Reviews" and search again.`);
+    if (state.fetchRoomRates && PROXY_MODE) {
+      const c = k => results.filter(h => h._pickedBy === k).length;
+      setStep(3, 'done', `Shortlist: ${c('Google popularity')} by Google reviews, ${c('Trip.com popularity')} by Trip.com reviews${c('Preferred') ? `, ${c('Preferred')} preferred` : ''}`);
+    }
 
     // Update header badge
     const badge = document.getElementById('data-source-badge');
@@ -2315,6 +2359,9 @@ function renderHotelCard(hotel, idx) {
     ? `<span class="badge-real">✓ Google Rating</span>`
     : `<span class="badge-est">AI Estimate</span>`;
 
+  const pickBadge = hotel._pickedBy && hotel._pickedBy !== 'Preferred'
+    ? `<span class="px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest ${hotel._pickedBy.startsWith('Trip') ? 'bg-sky-100 text-sky-700 border border-sky-300' : 'bg-blue-100 text-blue-700 border border-blue-300'}">${hotel._pickedBy.startsWith('Trip') ? 'Trip.com pick' : 'Google pick'}</span>` : '';
+
   const preferredBadge = hotel._isPreferred
     ? `<span class="bg-amber-100 text-amber-700 border border-amber-300 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest">★ Preferred</span>`
     : '';
@@ -2328,6 +2375,7 @@ function renderHotelCard(hotel, idx) {
             <h3 class="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">${idx+1}. ${hotel.name}</h3>
             <div class="flex">${stars}</div>
             ${preferredBadge}
+            ${pickBadge}
             <a href="${hotelMapUrl(hotel.name)}" target="_blank" rel="noopener"
                class="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
                title="View on ${mapProviderLabel()}">
@@ -3480,7 +3528,7 @@ function init() {
   document.getElementById('min-rating').value       = Number(state.minRating).toFixed(1);
   document.getElementById('min-room-size').value    = state.minRoomSize;
   document.getElementById('min-reviews').value      = state.minReviews;
-  document.getElementById('use-trip-reviews').checked = state.useTripReviews;
+  document.getElementById('shortlist-mix').value    = state.shortlistMix;
   document.getElementById('use-room-rates').checked = state.fetchRoomRates;
   document.getElementById('lookup-missing').checked = state.lookupMissing;
   document.getElementById('min-price').value        = state.minPrice;
