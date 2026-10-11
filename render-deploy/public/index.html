@@ -1642,7 +1642,9 @@ async function exportLuxeReport() {
             fmt: NUM, fill: cheapest ? YEL : cell.freeCancel ? GRN : undefined,
             note: cell.freeCancel ? `Free cancellation${cell.until ? ' until ' + cell.until : ''}` : undefined
           });
-          if (bf === 'bf' && room.cells[col]?.no && !bothKey) bothKey = col;
+          // Breakfast cost only makes sense like-for-like: same cancellation terms, and not cheaper than room-only
+          const pair = room.cells[col];
+          if (bf === 'bf' && pair?.no && !bothKey && pair.no.freeCancel === pair.bf.freeCancel && pair.bf.total >= pair.no.total) bothKey = col;
         }
         put(`L${row}`, any ? (bf === 'bf' ? 'Yes' : 'No') : null, { center: true });
       });
