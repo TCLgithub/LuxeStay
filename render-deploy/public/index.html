@@ -1318,7 +1318,7 @@ async function geocodeNearLocation() {
 // ═══════════════════════════════════════════════════
 window._liveRates = [];
 
-async function fetchLiveRates() {
+async function fetchLiveRates(pages = 2) {
   window._liveRates = [];
   if (!PROXY_MODE) return [];   // key lives server-side only
   try {
@@ -1327,7 +1327,7 @@ async function fetchLiveRates() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         q: `hotels in ${[state.district, state.city].filter(Boolean).join(', ')}`,
-        checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency, pages: 2
+        checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency, pages
       })
     });
     if (!r.ok) return [];
@@ -1364,6 +1364,30 @@ function findLiveRate(name, lat, lng) {
   return best || null;
 }
 
+// Give a shortlisted hotel its live rate + lookup token after the fact (used when it only shows up on later result pages)
+function attachLiveRate(h) {
+  const live = findLiveRate(h.name, h.lat, h.lng);
+  if (!live) return false;
+  const rate = KNOWN_RATES[state.currency] || 1;
+  h.liveRate = { rate: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency, token: live.token || null, locationRating: live.locationRating ?? null };
+  h.exchangeRateToMYR = rate;
+  if (h.roomTypes?.length) h.roomTypes = applyLiveRate(h.roomTypes, live, rate);
+  return true;
+}
+
+// Shortlisted hotels missing from the first result pages (they have fewer reviews): fetch further
+// pages, 1 credit each, up to 5 pages total, stopping as soon as every hotel is found
+async function findMissingLiveRates(hotels) {
+  const missing = () => hotels.filter(h => !h.liveRate?.token);
+  for (let pages = 3; pages <= 5 && missing().length; pages++) {
+    const prev = window._liveRates || [];
+    setStep(3, 'active', `Finding ${missing().length} more hotels in live rates (page ${pages})…`);
+    await fetchLiveRates(pages);
+    if ((window._liveRates || []).length <= prev.length) { window._liveRates = prev; break; }   // no further pages / failed
+    missing().forEach(attachLiveRate);
+  }
+}
+
 // Replace the AI's guess with the real lowest rate: cheapest room = live rate,
 // other tiers keep the AI's relative price spread. Recomputes budget flags.
 function applyLiveRate(roomTypes, live, rateToMYR) {
@@ -1386,17 +1410,17 @@ function applyLiveRate(roomTypes, live, rateToMYR) {
 // ═══════════════════════════════════════════════════
 // ROOM-LEVEL RATES — real room types per booking site, filtered on budget + size
 // ═══════════════════════════════════════════════════
-const ROOM_LOOKUP_MAX = 12;   // hotels looked up per search (1 SerpApi credit each)
+const ROOM_LOOKUP_MAX = 15;   // hotels looked up per search (1 SerpApi credit each)
 const ROOMS_PER_HOTEL = 3;    // qualifying room types kept per hotel
-const REPORT_COLS = ['hotel', 'agoda', 'booking', 'trip'];
+const REPORT_COLS = ['hotel', 'agoda', 'booking', 'trip', 'other'];
 
 function _srcCol(p) {
   if (p.official) return 'hotel';
   const s = (p.source || '').toLowerCase();
   if (s.includes('agoda')) return 'agoda';
-  if (s.includes('booking')) return 'booking';
-  if (s.includes('trip')) return 'trip';
-  return null;   // other sites are not part of the report columns
+  if (s.includes('booking.com')) return 'booking';
+  if (s.includes('trip.com')) return 'trip';
+  return 'other';   // Expedia, Hotels.com, Vio, … → cheapest of these goes in the "Other" column
 }
 
 const _ROOM_STOP = new Set(['room', 'rooms', 'with', 'the', 'a', 'and', 'of']);
@@ -1428,7 +1452,7 @@ function buildRoomCells(plans, nights) {
     const bf = p.breakfast ? 'bf' : 'no';
     cells[col] = cells[col] || {};
     const cur = cells[col][bf];
-    if (!cur || tot < cur.total) cells[col][bf] = { total: Math.round(tot), freeCancel: !!p.freeCancel, until: p.freeCancelUntil || null };
+    if (!cur || tot < cur.total) cells[col][bf] = { total: Math.round(tot), freeCancel: !!p.freeCancel, until: p.freeCancelUntil || null, ...(col === 'other' ? { source: p.source } : {}) };
   }
   return cells;
 }
@@ -1553,8 +1577,16 @@ function _fmtStayRange(ci, co) {
 async function exportLuxeReport() {
   if (typeof ExcelJS === 'undefined') { toast('Excel library still loading — try again in a moment', 3500); return; }
   const hotels = results.filter(h => h.rooms?.length);
-  if (!hotels.length) {
-    toast('No hotels with room-level rates yet — tick "Fetch live room-type rates" and search again', 5000);
+  const estOf = h => {   // second-best data: AI room types (scaled to Google's live lowest rate when we have one), same budget/size rules
+    const rate = h.exchangeRateToMYR || KNOWN_RATES[state.currency] || 1;
+    return (h.roomTypes || [])
+      .map(r => ({ name: r.type, size: parseSizeM2(r.sizeM2), night: r.pricePerNight, myr: r.pricePerNight * rate }))
+      .filter(r => r.night > 0 && r.myr >= state.minPrice && r.myr <= state.maxPrice && (r.size == null || r.size >= state.minRoomSize))
+      .sort((a, b) => a.night - b.night).slice(0, ROOMS_PER_HOTEL);
+  };
+  const estHotels = results.filter(h => !h.rooms?.length).map(h => ({ h, rooms: estOf(h) })).filter(x => x.rooms.length);
+  if (!hotels.length && !estHotels.length) {
+    toast('Nothing to export — no hotel has a room type that fits your budget and size', 5000);
     return;
   }
   const nights = getNights();
@@ -1567,7 +1599,7 @@ async function exportLuxeReport() {
   const NUM = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-';
   const YEL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
   const GRN = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
-  const COL = { hotel: 'H', agoda: 'I', booking: 'J', trip: 'K' };
+  const COL = { hotel: 'H', agoda: 'I', booking: 'J', trip: 'K', other: 'N' };
   const put = (addr, value, o = {}) => {
     const c = ws.getCell(addr);
     c.value = value;
@@ -1581,32 +1613,36 @@ async function exportLuxeReport() {
 
   ws.getColumn('A').width = 32;
   ws.getColumn('D').width = 30;
-  ['H', 'I', 'J', 'K'].forEach(c => { ws.getColumn(c).width = 15; });
+  ['H', 'I', 'J', 'K', 'N'].forEach(c => { ws.getColumn(c).width = 15; });
   ws.getColumn('M').width = 12;
 
   const crit = [`rating ≥ ${Number(state.minRating).toFixed(1)}`, `budget RM${state.minPrice}-${state.maxPrice}/night`, `room ≥ ${state.minRoomSize} m²`,
                 state.maxMRTWalk === 'any' ? 'any distance to MRT' : `MRT ${state.maxMRTWalk}`].join(' · ');
   put('A1', `LuxeStay report · generated ${_isoLocal(new Date())} · ${crit} · prices in MYR (${state.currency} × ${fx})`, { font: { italic: true, size: 9 } });
-  put('A2', 'Totals for the stay, plus taxes · green = free cancellation (see cell note), other prices non-refundable · M sq = AI-estimated room size (verify) · yellow = top pick / best price', { font: { italic: true, size: 9 } });
+  put('A2', 'Totals for the stay, plus taxes · green = free cancellation (see cell note), other prices non-refundable · Other = cheapest of Expedia/Hotels.com/etc. (site in cell note) · M sq = AI-estimated room size (verify) · yellow = top pick / best price · grey italic = estimates, not live', { font: { italic: true, size: 9 } });
   put('A3', `Hotel - ${state.district || state.city}`, { font: { bold: true } });
   put('A4', `${_fmtStayRange(state.checkIn, state.checkOut)}  (${nights} night${nights > 1 ? 's' : ''})`);
-  put('H4', 'Hotel', { center: true }); put('I4', 'Agoda', { center: true }); put('J4', 'Booking', { center: true }); put('K4', 'Trip', { center: true });
+  put('H4', 'Hotel', { center: true }); put('I4', 'Agoda', { center: true }); put('J4', 'Booking', { center: true }); put('K4', 'Trip', { center: true }); put('N4', 'Other', { center: true });
   put('C5', 'Location', { center: true }); put('C6', 'score', { center: true });
   put('G5', 'M sq', { center: true });
-  ['H', 'I', 'J', 'K'].forEach(c => put(c + '5', 'Plus taxes', { center: true }));
+  ['H', 'I', 'J', 'K', 'N'].forEach(c => put(c + '5', 'Plus taxes', { center: true }));
   ws.mergeCells('L5:M5'); put('L5', 'Breakfast', { center: true });
 
-  const colStat = { hotel: { free: 0, non: 0 }, agoda: { free: 0, non: 0 }, booking: { free: 0, non: 0 }, trip: { free: 0, non: 0 } };
-  const topPick = hotels.find(h => h._isPreferred) || hotels[0];
-  let r = 8;
-
-  for (const h of hotels) {
+  const hotelNotes = h => {
     const notes = [`Google ★${h.guestRating} (${(h.reviewCount || 0).toLocaleString()} reviews) · LuxeScore ${h.compositeScore}/10${h._isPreferred ? ' · ★ Preferred' : ''}`];
     if (h.distKm != null && state.nearLocation) notes.push(`${h.distKm.toFixed(1)} km from ${state.nearLocation}`);
     const px = h.proximity || {};
     if (px.mrt && px.mrt !== '—') notes.push(`Transit: ${px.mrt}`);
     (h.pros || []).forEach(p => notes.push(p));
     (h.cons || []).forEach(c => notes.push(`Con: ${c}`));
+    return notes;
+  };
+  const colStat = { hotel: { free: 0, non: 0 }, agoda: { free: 0, non: 0 }, booking: { free: 0, non: 0 }, trip: { free: 0, non: 0 }, other: { free: 0, non: 0 } };
+  const topPick = hotels.find(h => h._isPreferred) || hotels[0];
+  let r = 8;
+
+  for (const h of hotels) {
+    const notes = hotelNotes(h);
 
     const height = Math.max(h.rooms.length * 2, notes.length, 2);
     const isTop = h === topPick;
@@ -1640,7 +1676,7 @@ async function exportLuxeReport() {
           const cheapest = isTop && k === 0 && cell.total === Math.min(...REPORT_COLS.flatMap(c => ['no', 'bf'].map(b => room.cells[c]?.[b]?.total ?? Infinity)));
           put(`${COL[col]}${row}`, toMYR(cell.total), {
             fmt: NUM, fill: cheapest ? YEL : cell.freeCancel ? GRN : undefined,
-            note: cell.freeCancel ? `Free cancellation${cell.until ? ' until ' + cell.until : ''}` : undefined
+            note: [cell.source ? `Cheapest other site: ${cell.source}` : '', cell.freeCancel ? `Free cancellation${cell.until ? ' until ' + cell.until : ''}` : ''].filter(Boolean).join(' · ') || undefined
           });
           // Breakfast cost only makes sense like-for-like: same cancellation terms, and not cheaper than room-only
           const pair = room.cells[col];
@@ -1666,9 +1702,38 @@ async function exportLuxeReport() {
     put(`${COL[col]}6`, label || null, { center: true });
   }
 
-  const missing = results.filter(h => !h.rooms?.length).map(h => h.name);
+  // ── Second-best data: hotels without live room-level rates ──
+  const GREY = { italic: true, color: { argb: 'FF7F7F7F' } };
+  if (estHotels.length) {
+    put(`A${r}`, 'Estimates — no live room-level rates for these hotels. Room types are AI-estimated; price is scaled to the live Google Hotels lowest rate where the note says so.', { font: { bold: true, ...GREY } });
+    put(`N${r}`, 'Estimate', { center: true, font: { bold: true, ...GREY } });
+    r += 2;
+    for (const { h, rooms } of estHotels) {
+      const notes = hotelNotes(h);
+      notes.unshift(h.liveRate?.rate
+        ? `Estimate: Google Hotels lowest rate ${fmtPrice(h.liveRate.rate, state.currency)}/night is live (room type unknown); room types are AI-scaled to it`
+        : 'Estimate: AI only — no live rate found for this hotel/dates');
+      const height = Math.max(rooms.length, notes.length);
+      let l1 = h.name, l2 = '';
+      if (h.name.length > 32) { const cut = h.name.lastIndexOf(' ', 32); l1 = h.name.slice(0, cut > 0 ? cut : 32); l2 = h.name.slice(l1.length).trim(); }
+      put(`A${r}`, l1, { font: GREY });
+      if (l2) put(`A${r + 1}`, l2, { font: GREY });
+      const ls = h.liveRate?.locationRating ?? h.reviewMetrics?.transitProximity?.rating;
+      put(`C${r}`, ls || null, { center: true, fmt: '0.0', font: GREY });
+      rooms.forEach((rm, k) => {
+        put(`D${r + k}`, rm.name, { font: GREY });
+        put(`G${r + k}`, rm.size || null, { center: true, fmt: '0', font: GREY });
+        put(`N${r + k}`, toMYR(Math.round(rm.night * nights)), { fmt: NUM, font: GREY });
+      });
+      notes.slice(0, Math.max(height, notes.length)).forEach((n, i) => put(`O${r + i}`, n, { font: GREY }));
+      r += Math.max(height, notes.length, 2) + 2;
+    }
+  }
+
+  const shownNames = new Set([...hotels, ...estHotels.map(x => x.h)].map(h => h.name));
+  const missing = results.filter(h => !shownNames.has(h.name)).map(h => h.name);
   if (missing.length) {
-    put(`A${r}`, 'Not shown (no live room-level rates, AI estimates only — check manually):', { font: { italic: true } });
+    put(`A${r}`, 'Not shown (no live rates, and no estimated room type fits your budget/size):', { font: { italic: true } });
     missing.forEach((n, i) => put(`A${r + 1 + i}`, n, { font: { italic: true } }));
   }
 
@@ -1988,7 +2053,7 @@ async function handleSearch(e) {
 
     // ── Step 3: real room types + prices per booking site, filtered on budget & room size ──
     if (state.fetchRoomRates && PROXY_MODE) {
-      try { results = await enrichRoomRates(results); }
+      try { await findMissingLiveRates(results); results = await enrichRoomRates(results); }
       catch (e) { setStep(3,'err', e.message.slice(0,40)); }
       if (results.length === 0) {
         const diag = (window._filterDiag || []).filter(d => d.reason.startsWith('none of'));
