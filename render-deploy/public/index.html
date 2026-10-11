@@ -259,6 +259,10 @@
           <input type="checkbox" id="use-room-rates" checked class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"/>
           <span class="text-[10px] font-bold text-slate-500">Fetch live room-type rates for the Excel report (1 API credit per hotel)</span>
         </label>
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" id="lookup-missing" checked class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"/>
+          <span class="text-[10px] font-bold text-slate-500">Look up shortlisted hotels missing from live results by name (+1–2 credits each, max 6)</span>
+        </label>
       </div>
 
       <!-- Max Results -->
@@ -640,7 +644,7 @@ let state = {
   city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '',
   checkIn: _isoLocal(_defaultCheckIn), checkOut: _isoLocal(_defaultCheckOut),
   accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 4.0,
-  minRoomSize: 27, fetchRoomRates: true,
+  minRoomSize: 27, fetchRoomRates: true, lookupMissing: true,
   minPrice: 500, maxPrice: 1000, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12,
   qualityCriteria: { renovated:true, quiet:true, cleanliness:true, modern:true, nonSmoking:true },
   specialRequirements: ''
@@ -1398,6 +1402,46 @@ async function findMissingLiveRates(hotels) {
   }
 }
 
+// Shortlisted hotels still without live data (not in Google's city-wide list at all): look each one up by name.
+// Capped per search because every lookup costs SerpApi credits; preferred hotel goes first.
+const LOOKUP_MISSING_MAX = 6;
+async function lookupMissingHotels(hotels) {
+  if (!PROXY_MODE || !state.lookupMissing) return 0;
+  const todo = hotels.filter(h => !h.liveRate?.token && !h._plans)
+    .sort((a, b) => (b._isPreferred ? 1 : 0) - (a._isPreferred ? 1 : 0))
+    .slice(0, LOOKUP_MISSING_MAX);
+  if (!todo.length) return 0;
+
+  setStep(3, 'active', `Looking up ${todo.length} hotels by name…`);
+  setSearchStatus('Looking up missing hotels by name…');
+  const nights = getNights(), rate = KNOWN_RATES[state.currency] || 1;
+  let found = 0, next = 0;
+  await Promise.all(Array.from({ length: Math.min(3, todo.length) }, async () => {
+    while (next < todo.length) {
+      const h = todo[next++];
+      try {
+        const r = await fetch('/api/hotel-find', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: h.name, city: state.city, checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency, lat: h.lat, lng: h.lng })
+        });
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (!d.found || (!d.token && !d.plans?.length)) continue;
+        let night = d.rate;
+        if (!(night > 0) && d.plans?.length) night = Math.round(Math.min(...d.plans.map(p => p.totalPreTax || p.total || Infinity)) / nights);
+        if (!(night > 0) || !isFinite(night)) continue;
+        h.liveRate = { rate: night, rateBeforeTax: d.rateBeforeTax ?? null, totalRate: d.totalRate ?? null, offers: [], currency: state.currency, token: d.token || null, locationRating: d.locationRating ?? null };
+        h.exchangeRateToMYR = rate;
+        if (h.roomTypes?.length) h.roomTypes = applyLiveRate(h.roomTypes, { rate: night }, rate);
+        if (d.plans?.length) h._plans = d.plans;
+        if (!h.lat && d.lat) { h.lat = d.lat; h.lng = d.lng; }
+        found++;
+      } catch { /* leave this hotel as an estimate */ }
+    }
+  }));
+  return found;
+}
+
 // Replace the AI's guess with the real lowest rate: cheapest room = live rate,
 // other tiers keep the AI's relative price spread. Recomputes budget flags.
 function applyLiveRate(roomTypes, live, rateToMYR) {
@@ -1477,6 +1521,7 @@ function bestOfCells(cells) {
 }
 
 async function fetchRoomPlans(hotel) {
+  if (hotel._plans) return hotel._plans;   // already returned by the by-name lookup
   const token = hotel.liveRate?.token;
   if (!token) return null;
   try {
@@ -1516,7 +1561,7 @@ Return ONLY a valid JSON array, one item per hotel, using the exact hotel and ro
 // Replace AI room guesses with real room types + prices; keep up to 3 per hotel that fit budget & size
 async function enrichRoomRates(hotels) {
   const nights = getNights();
-  const targets = hotels.filter(h => h.liveRate?.token).slice(0, ROOM_LOOKUP_MAX);
+  const targets = hotels.filter(h => h.liveRate?.token || h._plans).slice(0, ROOM_LOOKUP_MAX);
   if (!targets.length) { setStep(3, 'skip', 'No hotels with live room data'); return hotels; }
 
   setStep(3, 'active', `Fetching room rates for ${targets.length} hotels…`);
@@ -1530,6 +1575,7 @@ async function enrichRoomRates(hotels) {
   const grouped = [];
   for (const h of targets) {
     const plans = fetched.get(h);
+    delete h._plans;   // keep saved results small
     if (!plans?.length) continue;
     const rooms = groupRoomPlans(plans)
       .map(g => ({ name: g.name, cells: buildRoomCells(g.plans, nights) }))
@@ -1940,6 +1986,7 @@ async function handleSearch(e) {
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
   state.minRoomSize  = Math.max(0, parseFloat(document.getElementById('min-room-size').value) || 0);
   state.fetchRoomRates = document.getElementById('use-room-rates').checked;
+  state.lookupMissing = document.getElementById('lookup-missing').checked;
   state.minPrice     = parseInt(document.getElementById('min-price').value);
   state.maxPrice     = parseInt(document.getElementById('max-price').value);
   state.maxResults   = parseInt(document.getElementById('max-results').value);
@@ -2069,7 +2116,7 @@ async function handleSearch(e) {
 
     // ── Step 3: real room types + prices per booking site, filtered on budget & room size ──
     if (state.fetchRoomRates && PROXY_MODE) {
-      try { await findMissingLiveRates(results); results = await enrichRoomRates(results); }
+      try { await findMissingLiveRates(results); await lookupMissingHotels(results); results = await enrichRoomRates(results); }
       catch (e) { setStep(3,'err', e.message.slice(0,40)); }
       if (results.length === 0) {
         const diag = (window._filterDiag || []).filter(d => d.reason.startsWith('none of'));
@@ -3315,6 +3362,7 @@ function init() {
   document.getElementById('min-rating').value       = Number(state.minRating).toFixed(1);
   document.getElementById('min-room-size').value    = state.minRoomSize;
   document.getElementById('use-room-rates').checked = state.fetchRoomRates;
+  document.getElementById('lookup-missing').checked = state.lookupMissing;
   document.getElementById('min-price').value        = state.minPrice;
   document.getElementById('max-price').value        = state.maxPrice;
   document.getElementById('mrt-distance').value     = state.maxMRTWalk;

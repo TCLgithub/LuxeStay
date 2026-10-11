@@ -246,6 +246,29 @@ app.post('/api/hotel-rates', async (req, res) => {
   }
 });
 
+// Flatten SerpApi featured_prices (source → room → rate plan) into one list of plans
+function flattenPlans(data) {
+  const plans = [];
+  for (const src of data.featured_prices || []) {
+    for (const room of src.rooms || []) {
+      const rates = Array.isArray(room.rates) && room.rates.length ? room.rates : [room];
+      for (const rt of rates) {
+        plans.push({
+          source: src.source, official: !!src.official, room: room.name,
+          breakfast: !!rt.breakfast_included,
+          freeCancel: !!rt.free_cancellation, freeCancelUntil: rt.free_cancellation_until_date || null,
+          perNight: rt.rate_per_night?.extracted_lowest ?? null,
+          perNightPreTax: rt.rate_per_night?.extracted_before_taxes_fees ?? null,
+          total: rt.total_rate?.extracted_lowest ?? null,
+          totalPreTax: rt.total_rate?.extracted_before_taxes_fees ?? null,
+          beds: (rt.beds || room.beds || []).map(b => `${b.count || 1} ${b.type}`).join(', ') || null
+        });
+      }
+    }
+  }
+  return plans.filter(p => p.room && (p.total > 0 || p.totalPreTax > 0 || p.perNight > 0));
+}
+
 // ── Room-level rates for one hotel (SerpApi Google Hotels property details) ─
 // 1 SerpApi credit per call; cached 6h per property/dates/currency.
 const roomCache = new Map();
@@ -276,33 +299,86 @@ app.post('/api/hotel-rooms', async (req, res) => {
     if (!r.ok || data.error) {
       return res.status(502).json({ error: 'SerpApi error', detail: String(data.error || r.status).split(key).join('***').slice(0, 200) });
     }
-    // Flatten source → room → rate plan into one list of plans
-    const plans = [];
-    for (const src of data.featured_prices || []) {
-      for (const room of src.rooms || []) {
-        const rates = Array.isArray(room.rates) && room.rates.length ? room.rates : [room];
-        for (const rt of rates) {
-          plans.push({
-            source: src.source, official: !!src.official, room: room.name,
-            breakfast: !!rt.breakfast_included,
-            freeCancel: !!rt.free_cancellation, freeCancelUntil: rt.free_cancellation_until_date || null,
-            perNight: rt.rate_per_night?.extracted_lowest ?? null,
-            perNightPreTax: rt.rate_per_night?.extracted_before_taxes_fees ?? null,
-            total: rt.total_rate?.extracted_lowest ?? null,
-            totalPreTax: rt.total_rate?.extracted_before_taxes_fees ?? null,
-            beds: (rt.beds || room.beds || []).map(b => `${b.count || 1} ${b.type}`).join(', ') || null
-          });
-        }
-      }
-    }
+    const plans = flattenPlans(data);
     const out = {
       name: data.name || null,
       hotelClass: data.extracted_hotel_class ?? null,
       locationRating: data.location_rating ?? null,
-      plans: plans.filter(p => p.room && (p.total > 0 || p.totalPreTax > 0 || p.perNight > 0))
+      plans
     };
     roomCache.set(cacheKey, { ts: Date.now(), data: out });
     res.json(out);
+  } catch (e) {
+    res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
+  }
+});
+
+// ── Look up one named hotel (for hotels missing from the city-wide result list) ──
+// 1 SerpApi credit. If Google resolves the name straight to the property page it also
+// carries the room rates, so no second credit is needed. Cached 6h.
+const findCache = new Map();
+const _normName = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(hotel|the|resort|and|by)\b/g, ' ').replace(/\s+/g, ' ').trim();
+const _sameName = (a, b) => {
+  const x = _normName(a), y = _normName(b);
+  return !!x && !!y && (x === y || (Math.min(x.length, y.length) >= 6 && (x.includes(y) || y.includes(x))));
+};
+const _km = (la1, lo1, la2, lo2) => {
+  const R = 6371, d = Math.PI / 180, dLa = (la2 - la1) * d, dLo = (lo2 - lo1) * d;
+  const a = Math.sin(dLa / 2) ** 2 + Math.cos(la1 * d) * Math.cos(la2 * d) * Math.sin(dLo / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+app.post('/api/hotel-find', async (req, res) => {
+  const key = process.env.SERPAPI_KEY || '';
+  if (!key) return res.status(503).json({ error: 'SERPAPI_KEY not configured' });
+
+  const { name, city, checkIn, checkOut, currency = 'USD', adults = 2, lat, lng } = req.body || {};
+  const dateOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  if (typeof name !== 'string' || !name || name.length > 120 || typeof city !== 'string' || city.length > 80 || !dateOk(checkIn) || !dateOk(checkOut)) {
+    return res.status(400).json({ error: 'name, city, checkIn and checkOut (YYYY-MM-DD) are required' });
+  }
+  const cur = String(currency).toUpperCase().slice(0, 3);
+  const nAdults = Math.min(Math.max(parseInt(adults) || 2, 1), 8);
+  const cacheKey = [name.toLowerCase(), city.toLowerCase(), checkIn, checkOut, cur, nAdults].join('|');
+  const hit = findCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < RATE_TTL_MS) return res.json({ ...hit.data, cached: true });
+
+  const finish = out => { findCache.set(cacheKey, { ts: Date.now(), data: out }); return res.json(out); };
+  try {
+    const params = new URLSearchParams({
+      engine: 'google_hotels', q: `${name} ${city}`, check_in_date: checkIn, check_out_date: checkOut,
+      adults: String(nAdults), currency: cur, hl: 'en', api_key: key
+    });
+    const r = await fetch('https://serpapi.com/search.json?' + params);
+    const data = await r.json();
+    if (data.error) {
+      if (/hasn.t returned any results|no results/i.test(String(data.error))) return finish({ found: false });
+      return res.status(502).json({ error: 'SerpApi error', detail: String(data.error).split(key).join('***').slice(0, 200) });
+    }
+    if (!r.ok) return res.status(502).json({ error: 'SerpApi error', detail: `HTTP ${r.status}` });
+
+    // Only accept the same hotel: matching name, or (nearly) the same coordinates
+    const matches = p => _sameName(p.name, name) ||
+      (typeof lat === 'number' && typeof lng === 'number' && p.gps_coordinates &&
+       _km(lat, lng, p.gps_coordinates.latitude, p.gps_coordinates.longitude) < 0.15);
+    const toCand = p => ({
+      name: p.name, token: p.property_token || null,
+      lat: p.gps_coordinates?.latitude ?? null, lng: p.gps_coordinates?.longitude ?? null,
+      rate: p.rate_per_night?.extracted_lowest ?? null, rateBeforeTax: p.rate_per_night?.extracted_before_taxes_fees ?? null,
+      totalRate: p.total_rate?.extracted_lowest ?? null, locationRating: p.location_rating ?? null,
+      rating: p.overall_rating ?? null, reviews: p.reviews ?? null
+    });
+
+    let cand = null, plans = null, shape = null;
+    if (Array.isArray(data.properties)) {                       // a result list: take the matching entry
+      const m = data.properties.find(matches);
+      if (m) { cand = toCand(m); shape = 'list'; }
+    }
+    if (!cand && data.name && (data.property_token || data.featured_prices) && matches(data)) {   // resolved straight to the property
+      cand = toCand(data); plans = flattenPlans(data); shape = 'property';
+    }
+    if (!cand) return finish({ found: false });
+    finish({ found: true, shape, ...cand, ...(plans && plans.length ? { plans } : {}) });
   } catch (e) {
     res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
   }
