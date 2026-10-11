@@ -247,7 +247,10 @@
           <option value="4.5">4.5+</option>
           <option value="4.7">4.7+</option>
         </select>
-        <p class="text-[9px] text-slate-400 font-bold pt-0.5">Ranked by highest review count, then highest rating · min. 200 reviews required</p>
+        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest pt-2">Min Google Reviews</label>
+        <input type="number" id="min-reviews" value="200" min="0" step="10"
+          class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"/>
+        <p class="text-[9px] text-slate-400 font-bold pt-0.5">Ranked by highest review count, then highest rating. Hotels reviewed mainly on Chinese sites often have few Google reviews: lower this to include them.</p>
       </div>
 
       <!-- Min Room Size -->
@@ -644,7 +647,7 @@ let state = {
   city: 'Singapore', district: '', nearLocation: 'Marina Bay Sands', preferredHotel: '',
   checkIn: _isoLocal(_defaultCheckIn), checkOut: _isoLocal(_defaultCheckOut),
   accommodationTypes: ['Hotel'], tripVibes: [], maxMRTWalk: 'any', minRating: 4.0,
-  minRoomSize: 27, fetchRoomRates: true, lookupMissing: true,
+  minRoomSize: 27, minReviews: 200, fetchRoomRates: true, lookupMissing: true,
   minPrice: 500, maxPrice: 1000, currency: 'SGD', minKm: 0, maxKm: 15, maxResults: 12,
   qualityCriteria: { renovated:true, quiet:true, cleanliness:true, modern:true, nonSmoking:true },
   specialRequirements: ''
@@ -656,7 +659,6 @@ const QUALITY_CRITERIA = [
   { key:'modern',      label:'Modern Facilities & Amenities' },
   { key:'nonSmoking',  label:'Non-Smoking Property' },
 ];
-const MIN_REVIEW_COUNT = 200;
 let results = [];
 let viewMode = 'comparison';
 let lastRealHotels = null; // track whether we got real data
@@ -852,14 +854,11 @@ async function fetchRealHotels() {
       body: JSON.stringify({ city: locationQuery, textQuery: q, maxResults: state.maxResults || 12, ...nearBias })
     }).then(r => r.ok ? r.json() : { places: [] }).then(d => d.places || []);
 
-    // City-wide: 6 queries covering all directions + budget tier for full coverage
-    // When district specified: focus queries on that district/area
-    const queries = state.district ? [
-      `hotels in ${locationQuery}`,
-      `${accomQuery} near ${state.district} ${state.city}${vibeQuery}`,
-      `hotels ${state.city} ${state.district} area`,
-      `affordable ${accomQuery} ${locationQuery}`
-    ] : [
+    // City-wide: 6 queries covering all directions + budget tier for full coverage.
+    // With an area set we run its own queries AND the city-wide ones: a loose area name ("Puxi") makes Google
+    // return only a handful of hotels (10 in testing, missing most of the real Puxi hotels), so the AI's strict
+    // area rule does the filtering instead of the search wording.
+    const cityQueries = [
       `hotels in ${state.city}`,
       `hotels north ${state.city}`,
       `hotels east ${state.city}`,
@@ -867,6 +866,13 @@ async function fetchRealHotels() {
       `hotels central downtown ${state.city}${vibeQuery}`,
       `affordable ${accomQuery} ${state.city}`
     ];
+    const queries = state.district ? [
+      `hotels in ${locationQuery}`,
+      `${accomQuery} near ${state.district} ${state.city}${vibeQuery}`,
+      `hotels ${state.city} ${state.district} area`,
+      `affordable ${accomQuery} ${locationQuery}`,
+      ...cityQueries
+    ] : cityQueries;
     const batches = await Promise.all(queries.map(q => call(q)));
     const seen = new Set();
     places = batches.flat().filter(p => {
@@ -899,9 +905,13 @@ async function fetchRealHotels() {
   // Loose rating floor — AI prompt and client scoring enforce the user's minRating
   // Also exclude the reference landmark itself (e.g. Marina Bay Sands when used as nearLocation)
   const refName = (state.nearLocation || '').toLowerCase().split(' ').slice(0, 2).join(' ');
+  window._reviewDropped = [];
   const filtered = places.filter(p => {
     if ((p.rating || 0) < Math.min(state.minRating, 3.0)) return false;
-    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < MIN_REVIEW_COUNT) return false;
+    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < state.minReviews && (p.rating || 0) >= state.minRating) {
+      window._reviewDropped.push({ name: p.displayName?.text || 'Unknown Hotel', rating: p.rating, reviews: p.userRatingCount || 0 });
+    }
+    if (!matchesPref(p.displayName?.text) && (p.userRatingCount || 0) < state.minReviews) return false;
     if (refName && (p.displayName?.text || '').toLowerCase().includes(refName)) return false;
     return true;
   });
@@ -948,7 +958,7 @@ function buildPromptWithRealData(hotels) {
   // Approximate nightly rate (local currency) below which PRICE_LEVEL_VERY_EXPENSIVE is excluded
   const VERY_EXP_FLOOR = { SGD:380, USD:280, MYR:1300, THB:11000, JPY:45000, EUR:280, GBP:240, HKD:2200, AUD:420, IDR:4200000, TWD:8500, KRW:370000, CNY:2000 };
 
-  window._preFilterDiag = [];
+  window._preFilterDiag = (window._reviewDropped || []).map(d => ({ name: d.name, reason: `only ${d.reviews} Google reviews (★${d.rating}), below your minimum of ${state.minReviews}` }));
   const eligible = hotels.filter(h => {
     // Preferred hotel always passes pre-filter
     if (matchesPref(h.name)) return true;
@@ -957,8 +967,8 @@ function buildPromptWithRealData(hotels) {
       window._preFilterDiag.push({ name: h.name, reason: `rating ${h.rating} below min ${state.minRating}` });
       return false;
     }
-    if ((h.reviewCount || 0) < MIN_REVIEW_COUNT) {
-      window._preFilterDiag.push({ name: h.name, reason: `${h.reviewCount} reviews below min ${MIN_REVIEW_COUNT}` });
+    if ((h.reviewCount || 0) < state.minReviews) {
+      window._preFilterDiag.push({ name: h.name, reason: `${h.reviewCount} reviews below min ${state.minReviews}` });
       return false;
     }
     if (h.priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE') {
@@ -979,7 +989,7 @@ function buildPromptWithRealData(hotels) {
     return true;
   });
 
-  const cap = Math.min(eligible.length, ((state.maxResults || 12) + 8) * (state.district ? 2 : 1));
+  const cap = Math.min(eligible.length, ((state.maxResults || 12) + 8) * (state.district ? 3 : 1));
   // Rank by review volume first (most-reviewed = most trusted), rating as tie-breaker
   const topHotels = [...eligible].sort((a, b) =>
     (b.reviewCount || 0) - (a.reviewCount || 0) || (b.rating || 0) - (a.rating || 0)
@@ -1046,7 +1056,7 @@ ${state.district ? '- ' + buildAreaRule() : ''}
 ${state.tripVibes.length ? '- Trip vibe / activities wanted: ' + state.tripVibes.map(t => VIBE_GROUPS.flatMap(g => g.items).find(i => i.type === t)?.label || t).join(', ') : ''}
 ${buildCriteriaNote()}
 - MRT preference: ${state.maxMRTWalk === 'any' ? 'No restriction' : state.maxMRTWalk === 'walk' ? 'Walking distance only' : 'Within ' + state.maxMRTWalk}
-- Reviews: all properties below already have ≥${MIN_REVIEW_COUNT} Google reviews — when ranking pros/cons, favour the ones with both the highest review counts and the highest ratings.
+- Reviews: all properties below already have ≥${state.minReviews} Google reviews — when ranking pros/cons, favour the ones with both the highest review counts and the highest ratings.
 ${locationNote ? '- ' + locationNote : ''}
 ${mrtNote}
 
@@ -1110,7 +1120,7 @@ ${vibeNote}
 ${buildAreaRule()}
 ${buildCriteriaNote()}
 
-CRITICAL: Only include properties with at least ${MIN_REVIEW_COUNT} reviews. Among those, select the Top ${state.maxResults || 12} by prioritising the HIGHEST review count first, then the HIGHEST rating. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
+CRITICAL: Only include properties with at least ${state.minReviews} reviews. Among those, select the Top ${state.maxResults || 12} by prioritising the HIGHEST review count first, then the HIGHEST rating. STRICT budget filter: only return hotels with ≥1 room type priced ${Math.round(state.minPrice/(KNOWN_RATES[state.currency]||1))}–${Math.round(state.maxPrice/(KNOWN_RATES[state.currency]||1))} ${state.currency}/night. EXCLUDE luxury hotels above this range. Include all accommodation types requested (Hotel, Resort, Villa, Airbnb/serviced apartment, etc.).
 ${state.nearLocation && (state.minKm > 0 || state.maxKm < 50) ? `DISTANCE: Only include hotels ${state.minKm}–${state.maxKm}km from ${state.nearLocation}. Do NOT include ${state.nearLocation} itself. Focus on neighbourhoods at that distance.` : ''}
 
 EXCHANGE RATE (do NOT invert): "exchangeRateToMYR" = how many MYR for 1 ${state.currency}. Reference: 1 ${state.currency} ≈ ${KNOWN_RATES[state.currency]||'?'} MYR.
@@ -1788,6 +1798,13 @@ async function exportLuxeReport() {
     }
   }
 
+  const lowRev = (window._reviewDropped || []).filter(d => d.name);
+  if (lowRev.length) {
+    put(`A${r}`, `Not included — fewer than ${state.minReviews} Google reviews (rating passes; any area; lower "Min Google Reviews" to include):`, { font: { italic: true } });
+    lowRev.forEach((d, i) => put(`A${r + 1 + i}`, `${d.name}  ★${d.rating} (${d.reviews} reviews)`, { font: { italic: true } }));
+    r += lowRev.length + 3;
+  }
+
   const shownNames = new Set([...hotels, ...estHotels.map(x => x.h)].map(h => h.name));
   const missing = results.filter(h => !shownNames.has(h.name)).map(h => h.name);
   if (missing.length) {
@@ -1889,8 +1906,8 @@ function filterAndScore(data) {
       return;
     }
 
-    if ((h.reviewCount || 0) < MIN_REVIEW_COUNT) {
-      h._excluded = `only ${h.reviewCount || 0} reviews — below min ${MIN_REVIEW_COUNT}`;
+    if ((h.reviewCount || 0) < state.minReviews) {
+      h._excluded = `only ${h.reviewCount || 0} reviews — below min ${state.minReviews}`;
       return;
     }
 
@@ -1986,6 +2003,7 @@ async function handleSearch(e) {
   state.specialRequirements = document.getElementById('special-requirements').value.trim();
   state.minRating    = parseFloat(document.getElementById('min-rating').value);
   state.minRoomSize  = Math.max(0, parseFloat(document.getElementById('min-room-size').value) || 0);
+  state.minReviews   = Math.max(0, parseInt(document.getElementById('min-reviews').value) || 0);
   state.fetchRoomRates = document.getElementById('use-room-rates').checked;
   state.lookupMissing = document.getElementById('lookup-missing').checked;
   state.minPrice     = parseInt(document.getElementById('min-price').value);
@@ -3144,7 +3162,7 @@ function saveSearch() {
       accommodationTypes: [...state.accommodationTypes], tripVibes: [...state.tripVibes], maxMRTWalk: state.maxMRTWalk,
       minRating: state.minRating, minPrice: state.minPrice, maxPrice: state.maxPrice,
       currency: state.currency, minKm: state.minKm, maxKm: state.maxKm,
-      maxResults: state.maxResults, minRoomSize: state.minRoomSize,
+      maxResults: state.maxResults, minRoomSize: state.minRoomSize, minReviews: state.minReviews,
       qualityCriteria: { ...state.qualityCriteria }, specialRequirements: state.specialRequirements
     }
   });
@@ -3170,6 +3188,8 @@ function loadSearch(id) {
   document.getElementById('min-rating').value      = Number(p.minRating || 4.0).toFixed(1);
   document.getElementById('min-room-size').value   = p.minRoomSize ?? 27;
   state.minRoomSize = p.minRoomSize ?? 27;
+  state.minReviews = p.minReviews ?? 200;
+  document.getElementById('min-reviews').value = state.minReviews;
   document.getElementById('min-price').value       = p.minPrice || 500;
   document.getElementById('max-price').value       = p.maxPrice || 1000;
   document.getElementById('max-results').value     = p.maxResults || 12;
@@ -3362,6 +3382,7 @@ function init() {
   document.getElementById('max-results').value     = state.maxResults;
   document.getElementById('min-rating').value       = Number(state.minRating).toFixed(1);
   document.getElementById('min-room-size').value    = state.minRoomSize;
+  document.getElementById('min-reviews').value      = state.minReviews;
   document.getElementById('use-room-rates').checked = state.fetchRoomRates;
   document.getElementById('lookup-missing').checked = state.lookupMissing;
   document.getElementById('min-price').value        = state.minPrice;
