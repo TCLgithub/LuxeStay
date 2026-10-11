@@ -958,8 +958,12 @@ function buildPromptWithRealData(hotels) {
       : '       (No review snippets available)';
     const tier = {PRICE_LEVEL_INEXPENSIVE:'$ Budget',PRICE_LEVEL_MODERATE:'$$ Mid-range',PRICE_LEVEL_EXPENSIVE:'$$$ Upscale',PRICE_LEVEL_VERY_EXPENSIVE:'$$$$ Luxury'}[h.priceLevel] || '';
     const isPref = matchesPref(h.name);
+    const live = findLiveRate(h.name, h.lat, h.lng);
+    const liveLine = live
+      ? `\n     LIVE MARKET RATE (verified, Google Hotels): ${live.rate} ${state.currency}/night — use this exact figure as the cheapest room's pricePerNight; price other tiers relative to it.`
+      : '';
     return `${i+1}. ${h.name}${isPref ? ' ★PREFERRED' : ''}
-     Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews${tier ? ` | Price tier: ${tier}` : ''}
+     Real Google Rating: ${h.rating}/5 | ${h.reviewCount.toLocaleString()} reviews${tier ? ` | Price tier: ${tier}` : ''}${liveLine}
      Address: ${h.address}
      Real Guest Reviews:
 ${revText}`;
@@ -1273,6 +1277,69 @@ async function geocodeNearLocation() {
   } catch {}
 }
 
+// ═══════════════════════════════════════════════════
+// LIVE RATES (Google Hotels via SerpApi, proxied by the server)
+// ═══════════════════════════════════════════════════
+window._liveRates = [];
+
+async function fetchLiveRates() {
+  window._liveRates = [];
+  if (!PROXY_MODE) return [];   // key lives server-side only
+  try {
+    const r = await fetch('/api/hotel-rates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        q: `hotels in ${[state.district, state.city].filter(Boolean).join(', ')}`,
+        checkIn: state.checkIn, checkOut: state.checkOut, currency: state.currency, pages: 2
+      })
+    });
+    if (!r.ok) return [];
+    const d = await r.json();
+    window._liveRates = (d.properties || []).filter(p => p.rate > 0);
+  } catch { window._liveRates = []; }
+  return window._liveRates;
+}
+
+function _normHotelName(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(hotel|the|resort|and|by)\b/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Match a hotel to a live-rate entry: same normalised name, else (nearly) same coordinates
+function findLiveRate(name, lat, lng) {
+  const list = window._liveRates || [];
+  if (!list.length) return null;
+  const n = _normHotelName(name);
+  let best = list.find(p => {
+    const m = _normHotelName(p.name);
+    return m && n && (m === n || (Math.min(m.length, n.length) >= 6 && (m.includes(n) || n.includes(m))));
+  });
+  if (!best && lat && lng) {
+    best = list.find(p => p.lat && p.lng && haversineKm(lat, lng, p.lat, p.lng) < 0.05);
+  }
+  return best || null;
+}
+
+// Replace the AI's guess with the real lowest rate: cheapest room = live rate,
+// other tiers keep the AI's relative price spread. Recomputes budget flags.
+function applyLiveRate(roomTypes, live, rateToMYR) {
+  const priced = roomTypes.filter(r => r.pricePerNight > 0);
+  let rooms;
+  if (!priced.length) {
+    rooms = [{ type: 'Lowest available rate', sizeM2: '—', breakfastIncluded: false, cancellationPolicy: '', pricePerNight: live.rate }];
+  } else {
+    const cheapest = Math.min(...priced.map(r => r.pricePerNight));
+    const factor = live.rate / cheapest;
+    rooms = roomTypes.map(r => r.pricePerNight > 0 ? { ...r, pricePerNight: Math.round(r.pricePerNight * factor) } : r);
+  }
+  const minPrice = Math.min(...rooms.filter(r => r.pricePerNight > 0).map(r => r.pricePerNight));
+  return rooms.map(r => {
+    const myr = r.pricePerNight * rateToMYR;
+    return { ...r, _live: r.pricePerNight === minPrice, _inBudget: !myr || (myr >= state.minPrice && myr <= state.maxPrice) };
+  });
+}
+
 function filterAndScore(data) {
   const knownRate = KNOWN_RATES[state.currency] || 1;
   const coordMap = {};
@@ -1307,18 +1374,25 @@ function filterAndScore(data) {
         return { ...r, pricePerNight: price||0, _inBudget: !bestMYR || (bestMYR >= state.minPrice && bestMYR <= state.maxPrice) };
       });
 
-    const distKm = (_nearLat && coords?.lat && coords?.lng)
-      ? haversineKm(_nearLat, _nearLng, coords.lat, coords.lng)
+    // Real market rate (Google Hotels) overrides the AI's price guess when we have one
+    const live = findLiveRate(h.name, coords?.lat, coords?.lng);
+    const rate = live ? knownRate : validRate;   // real FX rate for live-priced hotels
+
+    const pLat = coords?.lat || live?.lat, pLng = coords?.lng || live?.lng;
+    const distKm = (_nearLat && pLat && pLng)
+      ? haversineKm(_nearLat, _nearLng, pLat, pLng)
       : null;
+    const finalRooms = live ? applyLiveRate(roomTypes, live, rate) : roomTypes;
 
     return {
       ...h,
       features: h.features || [],
-      exchangeRateToMYR: validRate,
-      lat: coords?.lat || null,
-      lng: coords?.lng || null,
+      exchangeRateToMYR: rate,
+      lat: coords?.lat || live?.lat || null,
+      lng: coords?.lng || live?.lng || null,
       distKm,
-      roomTypes,
+      roomTypes: finalRooms,
+      liveRate: live ? { rate: live.rate, rateBeforeTax: live.rateBeforeTax, totalRate: live.totalRate, offers: live.offers || [], currency: state.currency } : null,
       _excluded: null
     };
   });
@@ -1451,6 +1525,9 @@ async function handleSearch(e) {
 
   let prompt;
 
+  // Live market rates fetch runs in parallel with Google Places (never throws; empty if unavailable)
+  const ratesPromise = fetchLiveRates();
+
   // ── Step 1: Google Places ──────────────────────
   try {
     setSearchStatus('Fetching real hotels from Google Maps…');
@@ -1501,9 +1578,11 @@ async function handleSearch(e) {
       : `${hotels.length} hotels (${rawCount} from Places, filtered by rating)`;
     setStep(1,'done', stepMsg);
     toast(`✓ Google Maps: ${hotels.length} hotels found`, 2500);
+    await ratesPromise;
     prompt = buildPromptWithRealData(hotels);
   } catch(err) {
     setStep(1,'skip', 'AI-only mode: ' + err.message.slice(0,40));
+    await ratesPromise;
     prompt = buildPromptAIOnly();
   }
 
@@ -1559,8 +1638,10 @@ async function handleSearch(e) {
     const btext = document.getElementById('data-source-text');
     badge.classList.remove('hidden');
     badge.classList.add('flex');
+    const liveCount = results.filter(h => h.liveRate).length;
+    if (liveCount) toast(`✓ Live rates matched for ${liveCount} of ${results.length} hotels`, 3500);
     if (lastRealHotels) {
-      btext.innerHTML = `<span class="badge-real" style="background:transparent;border:none;padding:0">✓ Real Google Ratings</span> + AI Prices`;
+      btext.innerHTML = `<span class="badge-real" style="background:transparent;border:none;padding:0">✓ Real Google Ratings</span> + ${liveCount ? 'Live Rates' : 'AI Prices'}`;
     } else {
       btext.innerHTML = `<span class="badge-est" style="background:transparent;border:none;padding:0">AI-Only Mode</span>`;
     }
@@ -1769,6 +1850,7 @@ function renderComparisonTable(hotel, nights) {
         <div class="font-black text-slate-900 text-[12px] leading-tight">${room.type}</div>
         <div class="flex items-center gap-1 mt-0.5">
           <span class="text-[8px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-black">${room.sizeM2||'—'}</span>
+          ${room._live ? '<span class="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-lg font-black">LIVE RATE</span>' : ''}
           ${overBudget ? '<span class="text-[8px] bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-lg font-black">Over budget</span>' : ''}
           <span class="text-[8px] text-slate-400">${room.cancellationPolicy||''}</span>
         </div>
@@ -1795,10 +1877,16 @@ function renderComparisonTable(hotel, nights) {
 
   return `
   <div class="border border-slate-200 rounded-3xl overflow-hidden">
+    ${hotel.liveRate ? `
+    <div class="bg-emerald-50/70 border-b border-emerald-100 px-4 py-2 flex items-center gap-2 flex-wrap">
+      <span class="badge-real">Live Rate</span>
+      <span class="text-[10px] text-slate-600">Google Hotels, ${nights} night${nights>1?'s':''}: from <b>${fmtPrice(hotel.liveRate.rate, cur)}</b>/night${hotel.liveRate.totalRate ? ` (${fmtPrice(hotel.liveRate.totalRate, cur)} total)` : ''}. Other room tiers are scaled estimates.</span>
+      ${(hotel.liveRate.offers||[]).filter(o=>o.rate>0).map(o => `<span class="text-[9px] bg-white border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-lg font-black">${String(o.source||'').replace(/[<>&"']/g,'')} ${fmtPrice(o.rate, cur)}${o.freeCancel ? ' · free cancel' : ''}</span>`).join('')}
+    </div>` : `
     <div class="bg-amber-50/60 border-b border-amber-100 px-4 py-2 flex items-center gap-2">
       <span class="badge-est">AI Est. Prices</span>
       <span class="text-[10px] text-slate-500">AI-estimated market rates — verify actual prices on booking platforms</span>
-    </div>
+    </div>`}
     <div class="overflow-x-auto">
       <table class="w-full text-[11px] border-collapse bg-white">
         <thead class="bg-slate-50/80">
@@ -1838,7 +1926,7 @@ function renderRoomCatalog(hotels) {
       <td class="px-4 py-3 text-[11px] text-slate-600">${room.type}</td>
       <td class="px-3 py-3 text-center text-[11px] text-slate-500">${room.sizeM2||'—'}</td>
       <td class="px-3 py-3 text-center text-[11px]">${room.breakfastIncluded?'<span class="text-emerald-600 font-black">Yes</span>':'<span class="text-slate-300">No</span>'}</td>
-      <td class="px-4 py-3 text-center font-black text-blue-700 text-[13px]">${price>0?fmtPrice(price,cur):'—'}</td>
+      <td class="px-4 py-3 text-center font-black text-blue-700 text-[13px]">${price>0?fmtPrice(price,cur):'—'}${room._live ? ' <span class="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-lg font-black">LIVE</span>' : ''}</td>
       <td class="px-4 py-3 text-center font-black text-green-700 text-[13px] bg-green-50/30">${price>0?fmtPrice(totalCur,cur):'—'}</td>
       <td class="px-4 py-3 text-center font-black text-orange-700 text-[13px] bg-orange-50/30">${price>0?fmtPrice(totalMYR,'MYR'):'—'}</td>
       <td class="px-3 py-3 text-center text-[10px] text-slate-400">${room.cancellationPolicy||'—'}</td>

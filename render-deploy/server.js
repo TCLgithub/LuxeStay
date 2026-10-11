@@ -176,6 +176,66 @@ app.post('/api/openai', async (req, res) => {
   }
 });
 
+// ── Live hotel rates (SerpApi → Google Hotels) ──────────────────────────────
+// Cached 6h per query/dates/currency so repeat searches don't burn the monthly quota.
+const rateCache = new Map();
+const RATE_TTL_MS = 6 * 60 * 60 * 1000;
+
+app.post('/api/hotel-rates', async (req, res) => {
+  const key = process.env.SERPAPI_KEY || '';
+  if (!key) return res.status(503).json({ error: 'SERPAPI_KEY not configured' });
+
+  const { q, checkIn, checkOut, currency = 'USD', adults = 2 } = req.body || {};
+  const pages = Math.min(Math.max(parseInt(req.body?.pages) || 2, 1), 3);
+  const dateOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  if (typeof q !== 'string' || !q || q.length > 200 || !dateOk(checkIn) || !dateOk(checkOut)) {
+    return res.status(400).json({ error: 'q, checkIn and checkOut (YYYY-MM-DD) are required' });
+  }
+  const cur = String(currency).toUpperCase().slice(0, 3);
+  const nAdults = Math.min(Math.max(parseInt(adults) || 2, 1), 8);
+
+  const cacheKey = [q.toLowerCase(), checkIn, checkOut, cur, nAdults, pages].join('|');
+  const hit = rateCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < RATE_TTL_MS) return res.json({ properties: hit.properties, cached: true });
+
+  try {
+    let token, raw = [];
+    for (let i = 0; i < pages; i++) {
+      const params = new URLSearchParams({
+        engine: 'google_hotels', q, check_in_date: checkIn, check_out_date: checkOut,
+        adults: String(nAdults), currency: cur, hl: 'en', sort_by: '13', api_key: key
+      });
+      if (token) params.set('next_page_token', token);
+      const r = await fetch('https://serpapi.com/search.json?' + params);
+      const data = await r.json();
+      if (!r.ok || data.error) {
+        if (i === 0) return res.status(502).json({ error: 'SerpApi error', detail: String(data.error || r.status).split(key).join('***').slice(0, 200) });
+        break;
+      }
+      raw.push(...(data.properties || []));
+      token = data.serpapi_pagination?.next_page_token;
+      if (!token) break;
+    }
+    const properties = raw.filter(p => p.name).map(p => ({
+      name: p.name,
+      lat: p.gps_coordinates?.latitude ?? null,
+      lng: p.gps_coordinates?.longitude ?? null,
+      rate: p.rate_per_night?.extracted_lowest ?? null,
+      rateBeforeTax: p.rate_per_night?.extracted_before_taxes_fees ?? null,
+      totalRate: p.total_rate?.extracted_lowest ?? null,
+      rating: p.overall_rating ?? null,
+      reviews: p.reviews ?? null,
+      offers: (p.prices || []).slice(0, 5).map(o => ({
+        source: o.source, rate: o.rate_per_night?.extracted_lowest ?? null, freeCancel: !!o.free_cancellation
+      }))
+    }));
+    rateCache.set(cacheKey, { ts: Date.now(), properties });
+    res.json({ properties });
+  } catch (e) {
+    res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
+  }
+});
+
 // ── Config (exposes non-secret browser keys) ────────────────────────────────
 app.get('/api/config', (req, res) => {
   res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '' });
