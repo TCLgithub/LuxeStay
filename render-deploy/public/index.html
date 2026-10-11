@@ -1393,7 +1393,8 @@ function attachLiveRate(h) {
 // pages, 1 credit each, up to 5 pages total, stopping as soon as every hotel is found
 async function findMissingLiveRates(hotels) {
   const missing = () => hotels.filter(h => !h.liveRate?.token);
-  for (let pages = 3; pages <= 5 && missing().length; pages++) {
+  // Page 3 is worth 1 credit for any missing hotel; pages 4-5 only when 3+ are still missing (otherwise the by-name lookup is cheaper)
+  for (let pages = 3; pages <= 5 && (pages === 3 ? missing().length > 0 : missing().length >= 3); pages++) {
     const prev = window._liveRates || [];
     setStep(3, 'active', `Finding ${missing().length} more hotels in live rates (page ${pages})…`);
     await fetchLiveRates(pages);
