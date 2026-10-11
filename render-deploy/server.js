@@ -270,6 +270,14 @@ function flattenPlans(data) {
   return plans.filter(p => p.room && (p.total > 0 || p.totalPreTax > 0 || p.perNight > 0));
 }
 
+// Ratings/review counts that Google shows from other sites (Trip.com, Tripadvisor): a popularity signal that
+// Chinese-market hotels have far more of than Google reviews
+function compactOtherReviews(data) {
+  return (data.other_reviews || []).map(o => ({
+    source: o.source, rating: o.source_rating?.score ?? null, max: o.source_rating?.max_score ?? 5, reviews: o.reviews ?? null
+  })).filter(o => o.source && o.reviews > 0);
+}
+
 // Flat per-site offers (SerpApi 'prices'): no room types, but live prices — used when featured_prices is empty
 function flattenPrices(data) {
   return (data.prices || []).map(o => ({
@@ -316,7 +324,8 @@ app.post('/api/hotel-rooms', async (req, res) => {
       hotelClass: data.extracted_hotel_class ?? null,
       locationRating: data.location_rating ?? null,
       plans,
-      prices: plans.length ? [] : flattenPrices(data)   // only needed when there are no room-level plans
+      prices: plans.length ? [] : flattenPrices(data),   // only needed when there are no room-level plans
+      otherReviews: compactOtherReviews(data)
     };
     roomCache.set(cacheKey, { ts: Date.now(), data: out });
     res.json(out);
@@ -381,17 +390,17 @@ app.post('/api/hotel-find', async (req, res) => {
       rating: p.overall_rating ?? null, reviews: p.reviews ?? null
     });
 
-    let cand = null, plans = null, prices = null, shape = null;
+    let cand = null, plans = null, prices = null, otherReviews = null, shape = null;
     if (Array.isArray(data.properties)) {                       // a result list: take the matching entry
       const m = data.properties.find(matches);
       if (m) { cand = toCand(m); shape = 'list'; }
     }
     if (!cand && data.name && (data.property_token || data.featured_prices) && matches(data)) {   // resolved straight to the property
-      cand = toCand(data); plans = flattenPlans(data); shape = 'property';
+      cand = toCand(data); plans = flattenPlans(data); shape = 'property'; otherReviews = compactOtherReviews(data);
       if (!plans.length) prices = flattenPrices(data);
     }
     if (!cand) return finish({ found: false });
-    finish({ found: true, shape, ...cand, ...(plans && plans.length ? { plans } : {}), ...(prices && prices.length ? { prices } : {}) });
+    finish({ found: true, shape, ...cand, ...(plans && plans.length ? { plans } : {}), ...(prices && prices.length ? { prices } : {}), ...(otherReviews && otherReviews.length ? { otherReviews } : {}) });
   } catch (e) {
     res.status(502).json({ error: 'Upstream error', detail: String(e.message).split(key).join('***') });
   }
