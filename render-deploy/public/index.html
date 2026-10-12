@@ -418,6 +418,11 @@
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 1.5v-1.5m0 0c0-.621.504-1.125 1.125-1.125m0 0h7.5"/></svg>
               Report (Excel)
             </button>
+            <button id="share-btn" onclick="shareResults()"
+              class="bg-blue-700 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-blue-800 shadow-lg transition-all active:scale-95 whitespace-nowrap">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"/></svg>
+              Share link
+            </button>
             <button id="save-results-btn" onclick="saveResults()"
               class="bg-slate-800 text-white px-4 py-2.5 rounded-[16px] font-black text-[10px] flex items-center gap-1.5 hover:bg-slate-900 shadow-lg transition-all active:scale-95 whitespace-nowrap">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2M7 12l5 5 5-5M12 17V3"/></svg>
@@ -480,10 +485,55 @@
   AI Aggregated Comparative Intelligence • LuxeStay 2026
 </footer>
 
+<!-- Access gate: shown when the server has an access code and the visitor has none -->
+<div id="access-gate" class="hidden fixed inset-0 z-[200] flex items-center justify-center p-6" style="background:rgba(15,23,42,.9)">
+  <div class="bg-white rounded-[32px] p-8 w-full max-w-sm shadow-2xl space-y-4">
+    <h2 class="text-xl font-black text-slate-800">LuxeStay is private</h2>
+    <p class="text-xs text-slate-500 font-bold">Enter the access code you were given to run searches. Shared result links don't need a code.</p>
+    <input id="access-code-input" type="password" autocomplete="off" placeholder="Access code"
+      class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500"/>
+    <p id="access-error" class="hidden text-xs font-black text-rose-600"></p>
+    <button onclick="submitAccessCode()" class="w-full bg-blue-700 hover:bg-blue-800 text-white font-black py-3 rounded-2xl text-sm transition-all">Unlock</button>
+  </div>
+</div>
+
+<!-- Share link dialog -->
+<div id="share-modal" class="hidden fixed inset-0 z-[150] flex items-center justify-center p-6" style="background:rgba(15,23,42,.6)">
+  <div class="bg-white rounded-[32px] p-8 w-full max-w-lg shadow-2xl space-y-4">
+    <div class="flex items-start justify-between gap-4">
+      <h2 class="text-xl font-black text-slate-800">Share these results</h2>
+      <button onclick="document.getElementById('share-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-700 font-black text-lg leading-none">✕</button>
+    </div>
+    <p class="text-xs text-slate-500 font-bold">Anyone with this link can view the results (read-only) and download the Excel/PDF. It costs you no API credits.</p>
+    <div class="flex gap-2">
+      <input id="share-url" readonly class="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-xs outline-none"/>
+      <button onclick="copyShareUrl()" class="bg-blue-700 hover:bg-blue-800 text-white font-black px-5 rounded-2xl text-xs transition-all">Copy</button>
+    </div>
+    <a id="share-wa" target="_blank" rel="noopener" class="inline-block text-[11px] font-black text-emerald-700 hover:text-emerald-900">Send via WhatsApp ↗</a>
+    <p id="share-warn" class="hidden text-[11px] font-black text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3"></p>
+  </div>
+</div>
+
 <script>
 // ═══════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+// ACCESS CODE: friends need it to run searches; shared result pages stay open
+// ═══════════════════════════════════════════════════
+const _origFetch = window.fetch.bind(window);
+function _savedCode() { try { return localStorage.getItem('ls_access_code') || ''; } catch { return ''; } }
+window.fetch = function (input, init = {}) {
+  const url = typeof input === 'string' ? input : (input?.url || '');
+  const isApi = url.startsWith('/api/');
+  const open = url.startsWith('/api/config') || url.startsWith('/api/auth') || (/^\/api\/share\/[^/]+$/.test(url) && (!init.method || init.method === 'GET'));
+  if (isApi && !open) init = { ...init, headers: { ...(init.headers || {}), 'x-access-code': _savedCode() } };
+  return _origFetch(input, init).then(r => {
+    if (isApi && !open && r.status === 401 && !window._shareView) showAccessGate('Enter the access code to continue');
+    return r;
+  });
+};
+
 const PROVIDERS = ['gemini','anthropic','deepseek','openai'];
 const P_LABELS  = { gemini:'Gemini Flash', deepseek:'DeepSeek V4', anthropic:'Claude Sonnet 5', openai:'GPT-5.4 Mini' };
 const DEFAULT_MODELS = {
@@ -1381,6 +1431,12 @@ async function fetchLiveRates(pages = 2) {
 // Nightly rate used for budget checks: before taxes when Google gives it (the report is "plus taxes"), else the displayed rate
 function liveNight(live) { return live.rateBeforeTax > 0 ? live.rateBeforeTax : live.rate; }
 
+// Cheapest room shown for a hotel, per night, in MYR (before tax when live)
+function cheapestNightMYR(h) {
+  const nums = (h.roomTypes || []).map(r => r.pricePerNight).filter(x => x > 0);
+  return nums.length ? Math.min(...nums) * (h.exchangeRateToMYR || 1) : null;
+}
+
 // Ratings Google shows from other sites (only known for hotels we looked up individually, 1 credit each)
 function tripStats(h) {
   const pick = re => { const o = (h.otherReviews || []).find(x => re.test(x.source)); return o ? { rating: o.rating, reviews: o.reviews } : null; };
@@ -1742,6 +1798,15 @@ async function enrichRoomRates(hotels) {
     }
     h.rooms = fits;
     h.roomsFound = all.length;
+    h.roomsAll = [...all].sort((a, b) => a.bestNight - b.bestNight).slice(0, 30).map(r => {   // every room found, with why it was or wasn't shown
+      const why = [];
+      if (r.size != null && r.size < state.minRoomSize) why.push(`under ${state.minRoomSize} m²`);
+      if (r.bestNightMYR < state.minPrice) why.push('below budget');
+      if (r.bestNightMYR > state.maxPrice) why.push('over budget');
+      return { name: r.name, size: r.size, night: r.bestNight, myr: Math.round(r.bestNightMYR),
+        status: why.length ? why.join(' + ') : (fits.includes(r) ? 'Fits your criteria (shown in report)' : 'Fits (more than 3 fit; cheapest 3 shown)'),
+        tot: Object.fromEntries(Object.entries(r.cells).map(([c, v]) => [c, Math.min(...Object.values(v).map(x => x.total))])) };
+    });
     h.roomTypes = fits.map(r => ({
       type: r.name, sizeM2: r.size ? `~${r.size} m²` : '—', breakfastIncluded: r.bestBf,
       cancellationPolicy: r.bestFree ? (r.bestUntil ? `Free cancel until ${r.bestUntil}` : 'Free cancel') : 'Non-refundable',
@@ -1812,7 +1877,7 @@ async function exportLuxeReport() {
   const crit = [`rating ≥ ${Number(state.minRating).toFixed(1)}`, `budget RM${state.minPrice}-${state.maxPrice}/night`, `room ≥ ${state.minRoomSize} m²`,
                 state.maxMRTWalk === 'any' ? 'any distance to MRT' : `MRT ${state.maxMRTWalk}`].join(' · ');
   put('A1', `LuxeStay report · generated ${_isoLocal(new Date())} · ${crit} · prices in MYR (${state.currency} × ${fx})`, { font: { italic: true, size: 9 } });
-  put('A2', 'Totals for the stay, plus taxes · green = free cancellation (see cell note), other prices non-refundable · Other = cheapest of Expedia/Hotels.com/etc. (site in cell note) · M sq = AI-estimated room size (verify) · yellow = top pick / best price · grey italic = estimates, not live', { font: { italic: true, size: 9 } });
+  put('A2', 'Totals for the stay, plus taxes · green = free cancellation (see cell note), other prices non-refundable · Other = cheapest of Expedia/Hotels.com/etc. (site in cell note) · M sq = AI-estimated room size (verify) · yellow = top pick / best price · grey italic = estimates, not live · Location score = Google location rating out of 5 (cell note says when it is an AI estimate)', { font: { italic: true, size: 9 } });
   put('A3', `Hotel - ${state.district || state.city}`, { font: { bold: true } });
   put('A4', `${_fmtStayRange(state.checkIn, state.checkOut)}  (${nights} night${nights > 1 ? 's' : ''})`);
   put('H4', 'Hotel', { center: true }); put('I4', 'Agoda', { center: true }); put('J4', 'Booking', { center: true }); put('K4', 'Trip', { center: true }); put('N4', 'Other', { center: true });
@@ -1856,7 +1921,8 @@ async function exportLuxeReport() {
     put(`A${r}`, l1, { fill });
     put(`A${r + 1}`, l2 || null, { fill });
     const locScore = h.liveRate?.locationRating ?? h.reviewMetrics?.transitProximity?.rating;
-    put(`C${r}`, locScore || null, { center: true, fmt: '0.0', fill });
+    put(`C${r}`, locScore || null, { center: true, fmt: '0.0', fill,
+      note: locScore ? (h.liveRate?.locationRating != null ? 'Google Hotels location rating (from guest reviews), out of 5' : 'AI estimate of transit/location, out of 5 (no Google location rating available)') : undefined });
     if (isTop) ['B', 'E', 'F'].forEach(c => put(`${c}${r}`, null, { fill }));
 
     h.rooms.forEach((room, k) => {
@@ -1941,6 +2007,32 @@ async function exportLuxeReport() {
   if (missing.length) {
     put(`A${r}`, 'Not shown (no live rates, and no estimated room type fits your budget/size):', { font: { italic: true } });
     missing.forEach((n, i) => put(`A${r + 1 + i}`, n, { font: { italic: true } }));
+  }
+
+  // Second sheet: every room type found, with why each was or wasn't shown above
+  const allHotels = results.filter(h => h.roomsAll?.length);
+  if (allHotels.length) {
+    const w2 = wb.addWorksheet('All rooms found');
+    const NUM2 = '#,##0';
+    const hdr = ['Hotel', 'Room type', 'M sq (est.)', 'Status vs your criteria', 'Best per night (MYR)', 'Hotel', 'Agoda', 'Booking', 'Trip', 'Other'];
+    w2.addRow([`Every room type found with live rates · totals for the stay in MYR, before taxes (${state.currency} × ${fx}) · green = fits your budget and size`]);
+    w2.getRow(1).font = { ...FONT, italic: true, size: 9 };
+    w2.addRow([]);
+    const hr = w2.addRow(hdr); hr.font = { ...FONT, bold: true }; hr.alignment = { horizontal: 'center' };
+    [30, 38, 11, 36, 16, 12, 12, 12, 12, 12].forEach((wd, i) => { w2.getColumn(i + 1).width = wd; });
+    for (const h of allHotels) {
+      const fxh = state.currency === 'MYR' ? 1 : fx;
+      h.roomsAll.forEach(rm => {
+        const t = c => rm.tot?.[c] != null ? Math.round(rm.tot[c] * fxh) : null;
+        const row = w2.addRow([h.name, rm.name, rm.size ?? null, rm.status, rm.myr, t('hotel'), t('agoda'), t('booking'), t('trip'), t('other')]);
+        row.font = FONT;
+        [3].forEach(c => { row.getCell(c).alignment = { horizontal: 'center' }; });
+        [5, 6, 7, 8, 9, 10].forEach(c => { row.getCell(c).numFmt = NUM2; });
+        if (rm.status.startsWith('Fits')) row.getCell(4).fill = GRN;
+      });
+    }
+    w2.views = [{ state: 'frozen', ySplit: 3 }];
+    w2.autoFilter = { from: 'A3', to: 'J3' };
   }
 
   const buf = await wb.xlsx.writeBuffer();
@@ -2146,6 +2238,20 @@ async function handleSearch(e) {
   state.maxResults   = parseInt(document.getElementById('max-results').value);
   state.minKm        = parseInt(document.getElementById('min-radius').value);
   state.maxKm        = parseInt(document.getElementById('max-radius').value);
+
+  if (PROXY_MODE) {   // server-side daily search allowance + access check
+    try {
+      const sr = await fetch('/api/search-start', { method: 'POST' });
+      if (sr.status === 401) return;   // the access gate is showing
+      if (sr.status === 429) {
+        const d = await sr.json().catch(() => ({}));
+        const box = document.getElementById('error-box');
+        box.textContent = d.error || 'Daily search limit reached. Try again tomorrow.';
+        box.classList.remove('hidden');
+        return;
+      }
+    } catch { /* offline: let the search fail naturally */ }
+  }
 
   setLoading(true);
   lastRealHotels = null;
@@ -2645,7 +2751,11 @@ function renderQualitativeView(hotels) {
     return {bg:'#ef4444', fg:'#ffffff'};
   }
 
-  const list = hotels.slice(0, 10);
+  const list = hotels.slice(0, 30);
+  const rateCell = h => {
+    const nm = cheapestNightMYR(h);
+    return `<td style="padding:6px 8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:center;font-size:11px;font-weight:800;color:#0f172a;white-space:nowrap">${nm ? 'RM' + Math.round(nm).toLocaleString() : '—'}<div style="font-size:9px;font-weight:600;color:#64748b">${h.rooms?.length ? 'live, before tax' : 'estimate'}</div></td>`;
+  };
 
   const headerCols = metrics.map(m =>
     `<th style="padding:6px 4px;text-align:center;font-size:10px;font-weight:700;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;white-space:nowrap;min-width:68px">${m.label}</th>`
@@ -2666,6 +2776,7 @@ function renderQualitativeView(hotels) {
         ${h.name}${realBadge}
         <div style="font-size:10px;font-weight:600;color:#64748b;margin-top:1px">⭐ ${h.guestRating} &nbsp;|&nbsp; Score ${(h.compositeScore||0).toFixed(0)}</div>
       </td>
+      ${rateCell(h)}
       ${cells}
     </tr>`;
   }).join('');
@@ -2693,6 +2804,7 @@ function renderQualitativeView(hotels) {
           <thead>
             <tr>
               <th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;min-width:160px">Hotel</th>
+              <th style="padding:8px 8px;text-align:center;font-size:10px;font-weight:700;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;min-width:96px;white-space:nowrap">From / night</th>
               ${headerCols}
             </tr>
           </thead>
@@ -2803,7 +2915,8 @@ function exportMatrixPDF() {
     doc.setTextColor(30,41,59); doc.setFont('helvetica','bold'); doc.setFontSize(11);
     doc.text(`${idx+1}. ${hotel.name}`,15,yPos);
     doc.setFontSize(7); doc.setTextColor(100,116,139);
-    doc.text(`LuxeScore: ${hotel.compositeScore}/10 | ★ ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)`,15,yPos+5);
+    const nmP = cheapestNightMYR(hotel);
+    doc.text(`LuxeScore: ${hotel.compositeScore}/10 | ★ ${hotel.guestRating}/5 (${(hotel.reviewCount||0).toLocaleString()} reviews)${nmP ? ` | From RM${Math.round(nmP).toLocaleString()}/night${hotel.rooms?.length ? ' (live, before tax)' : ' (estimate)'}` : ''}`,15,yPos+5);
     yPos+=11;
 
     // Two-column metric bars
@@ -2848,22 +2961,39 @@ function exportExcel() {
   const nights = getNights();
   const wb = XLSX.utils.book_new();
 
-  // Sheet 1: Room Inventory
-  const rows1 = [['Hotel','Rating','Reviews',lastRealHotels?'(Real)':'(Est)','Room Type','Size','Breakfast',
-    `Best Nightly ~${state.currency}`,`Est. Total ~${state.currency}`,`Est. Total ~MYR`,'MRT Access','LuxeScore']];
+  // Sheet 1: Room Inventory (rates come from pricePerNight; per-site totals when live room data exists)
+  const cur = state.currency;
+  const rows1 = [['Hotel','Rating','Google reviews','Trip.com reviews','Rate source','Room Type','Size (est.)','Breakfast (cheapest rate)',
+    `Per night ${cur}`,`Stay total ${cur}`,'Stay total MYR','Hotel site MYR','Agoda MYR','Booking MYR','Trip MYR','Other site MYR','MRT Access','LuxeScore']];
   results.forEach(h => {
-    (h.roomTypes||[]).forEach(r => {
-      const prices = Object.values(r.prices||{}).filter(p=>p>0);
-      const best   = prices.length?Math.min(...prices):0;
-      rows1.push([h.name, h.guestRating, h.reviewCount, lastRealHotels?'Real':'Est',
-        r.type, r.sizeM2, r.breakfastIncluded?'Yes':'No',
-        best, best*nights, best*nights*(h.exchangeRateToMYR||1),
-        h.proximity?.mrt||'', h.compositeScore]);
+    const fxr = h.exchangeRateToMYR || 1;
+    (h.roomTypes||[]).forEach((r, i) => {
+      const night = r.pricePerNight > 0 ? r.pricePerNight : (() => { const ps = Object.values(r.prices||{}).filter(x=>x>0); return ps.length ? Math.min(...ps) : 0; })();
+      const live = h.rooms?.[i];
+      const site = col => live?.cells?.[col] ? Math.round(Math.min(...Object.values(live.cells[col]).map(c => c.total)) * fxr) : '';
+      rows1.push([h.name, h.guestRating, h.reviewCount, tripStats(h).trip?.reviews ?? '',
+        live ? 'Live (booking sites)' : (h.liveRate ? 'Google lowest rate + AI tiers' : 'AI estimate'),
+        r.type, r.sizeM2, r.breakfastIncluded ? 'Yes' : 'No',
+        night, night * nights, Math.round(night * nights * fxr),
+        site('hotel'), site('agoda'), site('booking'), site('trip'), site('other'),
+        h.proximity?.mrt || '', h.compositeScore]);
     });
   });
   const ws1 = XLSX.utils.aoa_to_sheet(rows1);
-  ws1['!cols'] = [{wch:30},{wch:8},{wch:10},{wch:6},{wch:28},{wch:8},{wch:10},{wch:14},{wch:14},{wch:14},{wch:22},{wch:10}];
+  ws1['!cols'] = [{wch:30},{wch:8},{wch:10},{wch:10},{wch:26},{wch:32},{wch:10},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:22},{wch:10}];
   XLSX.utils.book_append_sheet(wb, ws1, 'Room Inventory');
+
+  // All room types found (not just the ones that fit), with why each was or wasn't shown
+  const rowsAll = [['Hotel','Room type','Size m² (est.)','Status vs your criteria','Per night MYR','Hotel site MYR','Agoda MYR','Booking MYR','Trip MYR','Other site MYR']];
+  results.forEach(h => (h.roomsAll || []).forEach(r => {
+    const fxr = h.exchangeRateToMYR || 1, t = c => r.tot?.[c] != null ? Math.round(r.tot[c] * fxr) : '';
+    rowsAll.push([h.name, r.name, r.size ?? '', r.status, r.myr, t('hotel'), t('agoda'), t('booking'), t('trip'), t('other')]);
+  }));
+  if (rowsAll.length > 1) {
+    const wsA = XLSX.utils.aoa_to_sheet(rowsAll);
+    wsA['!cols'] = [{wch:30},{wch:38},{wch:12},{wch:34},{wch:12},{wch:13},{wch:12},{wch:12},{wch:12},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, wsA, 'All Rooms Found');
+  }
 
   // Sheet 2: Qualitative
   const qKeys = ['staffFriendliness','overallCondition','cleanliness','transitProximity','acPerformance','noiseLevel','soundproofing','roomComfort','bathroomCondition','maintenanceQuality'];
@@ -2883,7 +3013,7 @@ function exportExcel() {
   XLSX.utils.book_append_sheet(wb, ws3, 'Profile Recommendations');
 
   XLSX.writeFile(wb, `LuxeStay_${state.city}.xlsx`);
-  toast('Excel exported! (3 sheets)');
+  toast('Excel exported!');
 }
 
 // ═══════════════════════════════════════════════════
@@ -3506,13 +3636,124 @@ function renderSavedResultsList() {
     </div>`).join('');
 }
 
+function showAccessGate(msg) {
+  const g = document.getElementById('access-gate'), e = document.getElementById('access-error');
+  g.classList.remove('hidden');
+  if (msg) { e.textContent = msg; e.classList.toggle('hidden', !msg || msg.startsWith('Enter')); }
+  setTimeout(() => document.getElementById('access-code-input')?.focus(), 50);
+}
+async function submitAccessCode() {
+  const input = document.getElementById('access-code-input'), e = document.getElementById('access-error');
+  const code = input.value.trim();
+  if (!code) return;
+  try {
+    const r = await _origFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    if (r.ok) {
+      try { localStorage.setItem('ls_access_code', code); } catch {}
+      input.value = ''; e.classList.add('hidden');
+      document.getElementById('access-gate').classList.add('hidden');
+      toast('Unlocked', 1800);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      e.textContent = r.status === 429 ? 'Too many attempts. Try again in a few minutes.' : 'Wrong code. Try again.';
+      e.classList.remove('hidden');
+    }
+  } catch { e.textContent = 'Could not reach the server.'; e.classList.remove('hidden'); }
+}
+async function verifyStoredCode() {
+  const c = _savedCode();
+  if (!c) return showAccessGate();
+  try {
+    const r = await _origFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: c }) });
+    if (!r.ok) showAccessGate();
+  } catch {}
+}
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter' && !document.getElementById('access-gate').classList.contains('hidden')) submitAccessCode();
+});
+
+// ── Share link ──
+function buildShareSnapshot() {
+  const keys = ['city','district','nearLocation','checkIn','checkOut','currency','minRating','minPrice','maxPrice','minRoomSize','minReviews','maxMRTWalk','shortlistMix','maxResults','preferredHotels'];
+  const meta = Object.fromEntries(keys.map(k => [k, state[k]]));
+  const slim = results.map(h => { const c = { ...h }; delete c._plans; return c; });
+  return { meta, results: slim, hasRealData: !!lastRealHotels, viewMode };
+}
+async function shareResults() {
+  if (!results.length) { toast('Nothing to share yet', 2500); return; }
+  if (!PROXY_MODE) { toast('Sharing needs the hosted app', 3000); return; }
+  const snapshot = buildShareSnapshot();
+  if (JSON.stringify(snapshot).length > 3500000) { toast('Result set too large to share', 4000); return; }
+  toast('Creating share link…', 10000);
+  try {
+    const r = await fetch('/api/share', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `${state.district || state.city} · ${state.checkIn}`, snapshot })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) return;   // the access gate is showing
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    showShareModal(d.url, d.durable);
+  } catch (e) { toast('Could not create the link: ' + e.message, 5000); }
+}
+function showShareModal(url, durable) {
+  document.getElementById('share-url').value = url;
+  document.getElementById('share-wa').href = 'https://wa.me/?text=' + encodeURIComponent(`LuxeStay hotel results for ${state.district || state.city}: ${url}`);
+  const w = document.getElementById('share-warn');
+  w.textContent = durable ? '' : 'This server keeps shared results on temporary disk: the link may stop working after the server sleeps or redeploys. Ask the owner to set GITHUB_TOKEN so links last.';
+  w.classList.toggle('hidden', durable);
+  document.getElementById('share-modal').classList.remove('hidden');
+  toast('Share link ready', 2000);
+}
+async function copyShareUrl() {
+  const el = document.getElementById('share-url');
+  try { await navigator.clipboard.writeText(el.value); toast('Link copied', 2000); }
+  catch { el.select(); document.execCommand('copy'); toast('Link copied', 2000); }
+}
+
+// ── Read-only shared results page (/s/<id>) ──
+async function loadSharedView(id) {
+  document.body.classList.add('share-view');
+  const box = document.getElementById('error-box');
+  try {
+    const r = await _origFetch('/api/share/' + encodeURIComponent(id));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Share not found');
+    const snap = d.snapshot || {};
+    Object.assign(state, snap.meta || {});
+    results = snap.results || [];
+    lastRealHotels = snap.hasRealData ? [] : null;
+    document.querySelector('aside')?.classList.add('hidden');
+    const sec = document.querySelector('main > section');
+    sec.classList.remove('lg:col-span-3'); sec.classList.add('lg:col-span-4');
+    ['save-results-btn', 'share-btn'].forEach(i => document.getElementById(i)?.classList.add('hidden'));
+    const when = d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '';
+    sec.insertAdjacentHTML('afterbegin', `<div class="bg-blue-50 border border-blue-200 rounded-3xl p-5 flex flex-wrap items-center gap-3 text-[12px] font-black text-blue-900">
+      <span>Shared results · ${state.district || state.city} · ${state.checkIn} → ${state.checkOut} (${getNights()} nights)${when ? ' · created ' + when : ''}</span>
+      <span class="text-blue-600 font-bold">Read-only. Export buttons work without any API cost.</span>
+      <a href="/" class="ml-auto bg-blue-700 text-white px-4 py-2 rounded-xl">Run your own search</a></div>`);
+    const badge = document.getElementById('data-source-badge'), btext = document.getElementById('data-source-text');
+    badge.classList.remove('hidden'); badge.classList.add('flex');
+    btext.innerHTML = lastRealHotels ? '<span class="badge-real" style="background:transparent;border:none;padding:0">✓ Real Google Ratings</span> + Live Rates' : '<span class="badge-est" style="background:transparent;border:none;padding:0">AI-Only Mode</span>';
+    document.getElementById('results-controls').classList.remove('hidden');
+    setViewMode(snap.viewMode || 'comparison');
+    updateExchangeRateBadge(results);
+    renderMap(results);
+  } catch (e) {
+    box.textContent = e.message; box.classList.remove('hidden');
+  }
+}
+
 function init() {
+  const sm = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{6,64})\/?$/);
+  if (sm) { window._shareView = true; window._shareId = sm[1]; }
   // Fetch live exchange rates (non-blocking, cached 12 h)
   fetchExchangeRates().then(() => updateExchangeRateBadge([])).catch(() => {});
 
   // Fetch Google Maps key from backend (non-blocking)
   fetch('/api/config').then(r => r.json()).then(cfg => {
     if (cfg.googleMapsKey) _gmapsKey = cfg.googleMapsKey;
+    if (cfg.accessRequired && !window._shareView) verifyStoredCode();
   }).catch(() => {});
 
   buildDatePicker('checkin-picker',  'Check-In Date',  state.checkIn,  'checkIn');
@@ -3547,6 +3788,7 @@ function init() {
     autoDetectCurrency(document.getElementById('city').value + ' ' + e.target.value);
   });
   buildSettingsPanel();
+  if (window._shareView) loadSharedView(window._shareId);
 }
 
 init();

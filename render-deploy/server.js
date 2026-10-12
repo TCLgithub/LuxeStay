@@ -1,9 +1,65 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
+const zlib = require('zlib');
+const crypto = require('crypto');
 const app = express();
+app.set('trust proxy', 1);   // Render sits behind a proxy: needed for the real client IP and https URLs
 
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Access control ──────────────────────────────────────────────────────────
+// ACCESS_CODE  : code you give friends; every /api call that spends money needs it (header x-access-code)
+// OWNER_CODE   : optional second code for you, exempt from the daily search limit
+// DAILY_SEARCH_LIMIT : searches per IP per day for ACCESS_CODE holders (default 20)
+// With neither code set the app stays open exactly as before.
+const ACCESS_CODE = process.env.ACCESS_CODE || '';
+const OWNER_CODE = process.env.OWNER_CODE || '';
+const DAILY_SEARCH_LIMIT = parseInt(process.env.DAILY_SEARCH_LIMIT) || 20;
+const sha = v => crypto.createHash('sha256').update(String(v)).digest();
+const same = (a, b) => !!b && crypto.timingSafeEqual(sha(a), sha(b));
+const codeOf = req => String(req.get('x-access-code') || '');
+const isOwner = req => !!OWNER_CODE && same(codeOf(req), OWNER_CODE);
+const accessEnabled = !!(ACCESS_CODE || OWNER_CODE);
+const authorized = req => !accessEnabled || (ACCESS_CODE && same(codeOf(req), ACCESS_CODE)) || isOwner(req);
+
+app.use('/api', (req, res, next) => {
+  const open =
+    (req.method === 'GET' && (req.path === '/config' || /^\/share\/[A-Za-z0-9_-]{6,64}$/.test(req.path))) ||
+    (req.method === 'POST' && req.path === '/auth');
+  if (open || authorized(req)) return next();
+  res.status(401).json({ error: 'access code required' });
+});
+
+const authTries = new Map();
+function tooManyTries(ip) {
+  const now = Date.now(), e = authTries.get(ip) || { n: 0, t: now };
+  if (now - e.t > 10 * 60 * 1000) { e.n = 0; e.t = now; }
+  e.n++; authTries.set(ip, e);
+  return e.n > 10;   // 10 wrong guesses per 10 minutes per IP
+}
+
+app.post('/api/auth', (req, res) => {
+  if (!accessEnabled) return res.json({ ok: true, open: true });
+  if (tooManyTries(req.ip)) return res.status(429).json({ error: 'too many attempts, try again later' });
+  const code = String(req.body?.code || '');
+  const ok = (ACCESS_CODE && same(code, ACCESS_CODE)) || (OWNER_CODE && same(code, OWNER_CODE));
+  if (!ok) return res.status(401).json({ error: 'wrong code' });
+  res.json({ ok: true, owner: !!(OWNER_CODE && same(code, OWNER_CODE)) });
+});
+
+// Each search calls this once: counts it against the caller's daily allowance
+const searchCounts = new Map();
+app.post('/api/search-start', (req, res) => {
+  if (!ACCESS_CODE || isOwner(req)) return res.json({ ok: true, unlimited: true });
+  const day = new Date().toISOString().slice(0, 10);
+  for (const k of searchCounts.keys()) if (!k.endsWith('|' + day)) searchCounts.delete(k);
+  const key = `${req.ip}|${day}`, n = (searchCounts.get(key) || 0) + 1;
+  if (n > DAILY_SEARCH_LIMIT) return res.status(429).json({ error: `Daily search limit (${DAILY_SEARCH_LIMIT}) reached. Try again tomorrow.` });
+  searchCounts.set(key, n);
+  res.json({ ok: true, remaining: DAILY_SEARCH_LIMIT - n });
+});
 
 // ── Google Places API ───────────────────────────────────────────────────────
 app.post('/api/places', async (req, res) => {
@@ -408,7 +464,7 @@ app.post('/api/hotel-find', async (req, res) => {
 
 // ── Config (exposes non-secret browser keys) ────────────────────────────────
 app.get('/api/config', (req, res) => {
-  res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '' });
+  res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', accessRequired: accessEnabled, shareDurable: !!process.env.GITHUB_TOKEN });
 });
 
 // ── Google Geocoding ────────────────────────────────────────────────────────
@@ -430,6 +486,94 @@ app.get('/api/geocode', async (req, res) => {
     res.status(502).json({ error: e.message });
   }
 });
+
+// ── Share links: read-only snapshots of a result set ────────────────────────
+// Durable storage: a secret GitHub Gist when GITHUB_TOKEN is set (classic token with the "gist" scope).
+// Otherwise files on local disk, which Render's free tier loses whenever the server sleeps or redeploys.
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+const SHARE_DIR = process.env.SHARE_DIR || path.join(__dirname, 'data', 'shares');
+const SHARE_DESC = 'LuxeStay shared results';
+const SHARE_FILE = 'luxestay-share.json';
+const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+const gh = (url, opts = {}) => fetch('https://api.github.com' + url, {
+  ...opts,
+  headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'User-Agent': 'LuxeStay',
+             'X-GitHub-Api-Version': '2022-11-28', 'content-type': 'application/json', ...(opts.headers || {}) }
+});
+
+// Strip angle brackets from every string so a shared snapshot can't carry markup into the viewer's page
+function cleanDeep(v, depth = 0) {
+  if (depth > 14) return null;
+  if (typeof v === 'string') return v.replace(/</g, '‹').replace(/>/g, '›').slice(0, 4000);
+  if (Array.isArray(v)) return v.slice(0, 500).map(x => cleanDeep(x, depth + 1));
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const [k, x] of Object.entries(v).slice(0, 300)) o[k.slice(0, 60)] = cleanDeep(x, depth + 1);
+    return o;
+  }
+  return typeof v === 'number' || typeof v === 'boolean' ? v : null;
+}
+const pack = obj => zlib.gzipSync(JSON.stringify(obj)).toString('base64');
+const unpack = str => JSON.parse(zlib.gunzipSync(Buffer.from(str, 'base64')).toString('utf8'));
+
+async function saveShare(obj) {
+  const packed = pack(obj);
+  if (GITHUB_TOKEN) {
+    const r = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: SHARE_DESC, public: false, files: { [SHARE_FILE]: { content: packed } } }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(`GitHub: ${d.message || r.status}`);
+    return d.id;
+  }
+  fs.mkdirSync(SHARE_DIR, { recursive: true });
+  for (const f of fs.readdirSync(SHARE_DIR)) {   // drop expired files
+    try { if (Date.now() - fs.statSync(path.join(SHARE_DIR, f)).mtimeMs > SHARE_TTL_MS) fs.unlinkSync(path.join(SHARE_DIR, f)); } catch {}
+  }
+  const id = crypto.randomBytes(9).toString('base64url');
+  fs.writeFileSync(path.join(SHARE_DIR, id + '.json.gz.b64'), packed);
+  return id;
+}
+
+async function loadShare(id) {
+  if (GITHUB_TOKEN && /^[0-9a-f]{20,40}$/.test(id)) {
+    const r = await gh('/gists/' + id);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const f = d.files?.[SHARE_FILE];
+    if (!f || d.description !== SHARE_DESC) return null;   // only ever serve our own snapshots, never arbitrary gists
+    const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+    return unpack(text);
+  }
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return null;
+  const file = path.join(SHARE_DIR, id + '.json.gz.b64');
+  if (!fs.existsSync(file) || Date.now() - fs.statSync(file).mtimeMs > SHARE_TTL_MS) return null;
+  return unpack(fs.readFileSync(file, 'utf8'));
+}
+
+app.post('/api/share', async (req, res) => {
+  const snap = req.body?.snapshot;
+  if (!snap || !Array.isArray(snap.results) || !snap.results.length || snap.results.length > 60) {
+    return res.status(400).json({ error: 'snapshot with 1-60 results required' });
+  }
+  try {
+    const clean = cleanDeep({ v: 1, createdAt: new Date().toISOString(), title: String(req.body.title || '').slice(0, 120), snapshot: snap });
+    const id = await saveShare(clean);
+    res.json({ id, url: `${req.protocol}://${req.get('host')}/s/${id}`, durable: !!GITHUB_TOKEN });
+  } catch (e) {
+    res.status(502).json({ error: 'Could not store the share', detail: String(e.message).split(GITHUB_TOKEN || '\u0000').join('***').slice(0, 200) });
+  }
+});
+
+app.get('/api/share/:id', async (req, res) => {
+  try {
+    const data = await loadShare(req.params.id);
+    if (!data) return res.status(404).json({ error: 'This share link was not found or has expired' });
+    res.set('Cache-Control', 'public, max-age=300').json(data);
+  } catch (e) { res.status(502).json({ error: 'Could not load the share' }); }
+});
+
+// Shared results page: the same app in read-only mode
+app.get('/s/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`LuxeStay server running on port ${PORT}`));
