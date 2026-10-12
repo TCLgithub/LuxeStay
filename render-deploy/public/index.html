@@ -1931,7 +1931,7 @@ async function exportLuxeReport() {
 
   const lowRev = (window._reviewDropped || []).filter(d => d.name);
   if (lowRev.length) {
-    put(`A${r}`, `Not included — fewer than ${state.minReviews} Google reviews (rating passes; any area; lower "Min Google Reviews" to include):`, { font: { italic: true } });
+    put(`A${r}`, `Not included — fewer than ${googleFloor()} Google reviews (rating passes; any area${state.shortlistMix === 'balanced' ? '; Trip.com-popular hotels are judged separately' : '; lower "Min Google Reviews" to include'}):`, { font: { italic: true } });
     lowRev.forEach((d, i) => put(`A${r + 1 + i}`, `${d.name}  ★${d.rating} (${d.reviews} reviews)`, { font: { italic: true } }));
     r += lowRev.length + 3;
   }
