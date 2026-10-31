@@ -462,9 +462,117 @@ app.post('/api/hotel-find', async (req, res) => {
   }
 });
 
+// ── Guest reviews of one property (SerpApi Google Hotels Reviews) ───────────
+// 1 SerpApi credit per page. Pulls the lowest-rated pages first (where the complaints are) plus
+// recent pages, so the page can screen the last 24 months. Cached 12h per property/page count.
+const reviewCache = new Map();
+const REVIEW_TTL_MS = 12 * 60 * 60 * 1000;
+
+app.post('/api/hotel-reviews', async (req, res) => {
+  const key = process.env.SERPAPI_KEY || '';
+  if (!key) return res.status(503).json({ error: 'SERPAPI_KEY not configured' });
+
+  const { token } = req.body || {};
+  if (typeof token !== 'string' || !token || token.length > 400) return res.status(400).json({ error: 'token is required' });
+  const nPages = Math.min(Math.max(parseInt(req.body.pages) || 4, 1), 10);
+  const recentPages = nPages >= 6 ? 2 : nPages >= 2 ? 1 : 0;   // the rest go to lowest-rated reviews
+  const lowPages = nPages - recentPages;
+
+  const cacheKey = token + '|' + nPages;
+  const hit = reviewCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < REVIEW_TTL_MS) return res.json({ ...hit.data, cached: true });
+
+  const scrub = v => String(v).split(key).join('***').slice(0, 200);
+  // Pull `count` pages in one sort order. Later pages use SerpApi's own "next" URL (it carries the page token).
+  async function pull(sortBy, count) {
+    const out = []; let next = null, used = 0;
+    for (let i = 0; i < count; i++) {
+      let url;
+      if (next) {
+        try { const u = new URL(next); if (u.hostname !== 'serpapi.com') break; u.searchParams.set('api_key', key); url = u.toString(); } catch { break; }
+      } else {
+        url = 'https://serpapi.com/search.json?' + new URLSearchParams({ engine: 'google_hotels_reviews', property_token: token, sort_by: String(sortBy), hl: 'en', api_key: key });
+      }
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!r.ok || data.error) {
+        if (i === 0 && !out.length) throw new Error(scrub(data.error || r.status));
+        break;
+      }
+      used++;
+      for (const rv of data.reviews || []) {
+        out.push({
+          rating: rv.rating ?? null, best: rv.best_rating ?? 5,
+          date: rv.date || null, text: String(rv.snippet || rv.original_snippet || '').slice(0, 700),
+          source: rv.source || 'Google', userLink: rv.user?.link || null,
+          ownerReply: !!rv.response, sort: sortBy === 2 ? 'recent' : 'lowest'
+        });
+      }
+      next = data.serpapi_pagination?.next || null;
+      if (!next) break;
+    }
+    return { out, used };
+  }
+
+  try {
+    const low = lowPages ? await pull(4, lowPages) : { out: [], used: 0 };
+    const rec = recentPages ? await pull(2, recentPages).catch(() => ({ out: [], used: 0 })) : { out: [], used: 0 };
+    const seen = new Set(), reviews = [];
+    for (const rv of [...low.out, ...rec.out]) {   // the same review can show up in both orders
+      const k = (rv.userLink || '') + '|' + rv.text.slice(0, 60) + '|' + rv.date;
+      if (seen.has(k)) continue;
+      seen.add(k); reviews.push(rv);
+    }
+    const out = { reviews, credits: low.used + rec.used, lowestPages: low.used, recentPages: rec.used };
+    reviewCache.set(cacheKey, { ts: Date.now(), data: out });
+    res.json(out);
+  } catch (e) {
+    res.status(502).json({ error: 'SerpApi error', detail: scrub(e.message) });
+  }
+});
+
+// ── Save outputs to this computer ───────────────────────────────────────────
+// Only works when the server runs on the user's own machine (not on Render) and the request comes from that machine.
+const SAVE_DIR = process.env.SAVE_DIR || 'C:\\Travel\\hotel';
+const CAN_SAVE_LOCALLY = !process.env.RENDER;
+const isLoopback = a => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(a);
+const SAVE_EXT = new Set(['.xlsx', '.pdf', '.png', '.json', '.csv', '.html']);
+
+app.post('/api/save-outputs', (req, res) => {
+  if (!CAN_SAVE_LOCALLY || !isLoopback(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'This server cannot write to your computer (it is not running locally).' });
+  }
+  const files = req.body?.files;
+  if (!Array.isArray(files) || !files.length || files.length > 10) return res.status(400).json({ error: 'files (1-10) required' });
+  try {
+    // validate every file before writing any, so a bad request never leaves a partial save
+    const prepared = [];
+    for (const f of files) {
+      const base = path.basename(String(f.name || '')).replace(/[^\w.\- ()]+/g, '_');
+      const ext = path.extname(base).toLowerCase();
+      if (!base || !SAVE_EXT.has(ext)) return res.status(400).json({ error: `File type not allowed: ${base || '(no name)'}` });
+      const data = Buffer.from(String(f.b64 || ''), 'base64');
+      if (!data.length) return res.status(400).json({ error: `Empty file: ${base}` });
+      prepared.push({ base, ext, data });
+    }
+    fs.mkdirSync(SAVE_DIR, { recursive: true });
+    const saved = [];
+    for (const { base, ext, data } of prepared) {
+      // never overwrite an earlier output: add _2, _3 ... when the name is taken
+      let target = path.join(SAVE_DIR, base), n = 1;
+      while (fs.existsSync(target)) target = path.join(SAVE_DIR, `${path.basename(base, ext)}_${++n}${ext}`);
+      fs.writeFileSync(target, data, { flag: 'wx' });
+      saved.push({ path: target, bytes: data.length });
+    }
+    res.json({ ok: true, dir: SAVE_DIR, saved });
+  } catch (e) {
+    res.status(500).json({ error: `Could not save: ${e.code || ''} ${e.message}`.trim().slice(0, 240), dir: SAVE_DIR });
+  }
+});
+
 // ── Config (exposes non-secret browser keys) ────────────────────────────────
 app.get('/api/config', (req, res) => {
-  res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', accessRequired: accessEnabled, shareDurable: !!process.env.GITHUB_TOKEN });
+  res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', accessRequired: accessEnabled, shareDurable: !!process.env.GITHUB_TOKEN, localSave: CAN_SAVE_LOCALLY, saveDir: CAN_SAVE_LOCALLY ? SAVE_DIR : '' });
 });
 
 // ── Google Geocoding ────────────────────────────────────────────────────────
